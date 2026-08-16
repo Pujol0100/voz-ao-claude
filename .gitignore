@@ -1,0 +1,19 @@
+# Estado local da Clarisse - nunca versionar
+clarisse/fala.txt
+clarisse/historico.txt
+clarisse/player.pid
+clarisse/clarisse.log
+clarisse/pending/
+
+# Audio gerado
+*.mp3
+*.wav
+
+# Backups de configuracao
+*.bak
+settings.json.bak*
+
+# Sistema
+Thumbs.db
+desktop.ini
+.DS_Store
