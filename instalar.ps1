@@ -158,6 +158,7 @@ Passo 'edge-tts instalado'
 Titulo '2/5  Arquivos'
 New-Item -ItemType Directory -Force $DestClarisse | Out-Null
 New-Item -ItemType Directory -Force $DestComandos | Out-Null
+New-Item -ItemType Directory -Force (Join-Path $DestClarisse 'entrada') | Out-Null
 
 # Encerra um escutador de versao anterior antes de sobrescrever os scripts.
 if (Test-Path $ScriptDest) {
