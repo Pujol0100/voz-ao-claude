@@ -1,6 +1,6 @@
 # voz-ao-claude
 
-**Clarisse** dá voz ao [Claude Code](https://claude.com/claude-code) no Windows. Quando o Claude termina uma resposta, ela fala em voz alta o que foi feito, os números que apareceram e o que ficou pendente.
+**Clarisse** dá voz ao [Claude Code](https://claude.com/claude-code) no Windows. Quando o Claude termina uma resposta, ela dá um bipe curto — e fala em voz alta o que foi feito, os números que apareceram e o que ficou pendente **quando você apertar `Ctrl+Alt+L`**.
 
 O Claude Code já **ouve** você (voice mode). Este projeto fecha o outro lado: ele passa a **responder falando**.
 
@@ -11,12 +11,17 @@ Nasceu de um problema concreto de acessibilidade: dificuldade de concentração 
 A solução não é ler a resposta inteira em voz alta. Isso é pior: TTS fala ~150 palavras/min e ninguém aguenta ouvir caminho de arquivo e bloco de código. A Clarisse fala **só o que não pode passar**:
 
 - o resultado do que acabou de rodar;
+- o achado ou a conclusão — dito por inteiro, não anunciado;
 - o que ainda falta ou precisa da sua decisão;
 - valores, prazos e datas, ditos devagar;
 - avisos antes de qualquer ação irreversível;
 - quando o Claude para esperando sua permissão.
 
-O detalhe continua na tela. O áudio é o resumo.
+O detalhe e o código continuam na tela. O áudio é o resultado.
+
+**Resumo não é aviso.** A instrução no `CLAUDE.md` proíbe explicitamente frases ocas: nada de "encontrei um problema" sem dizer qual, ou "preciso da sua decisão" sem dizer qual. Se o resumo menciona algo que exige ação, o conteúdo vem na mesma frase.
+
+**Você decide a hora de ouvir.** Voz que dispara sozinha atropela quem está no meio de outra coisa — e se você a corta, perde o que ela ia dizer. Por isso o fim de uma resposta só emite um bipe; a fala sai no seu comando, e você pode pausá-la e retomá-la do mesmo ponto.
 
 ## Como funciona
 
@@ -29,17 +34,37 @@ você fala  ──►  Claude Code (voice mode)  ──►  Claude trabalha
                                                      │
                                           hook Stop dispara
                                                      │
+                              resumo entra na fila  ──►  🔔 bipe curto
+                                                     │
+                                          você aperta Ctrl+Alt+L
+                                                     │
                                     edge-tts gera o áudio ──► 🔊 Clarisse fala
 ```
 
 | Peça | Papel |
 |---|---|
+| `clarisse/nucleo.ps1` | Núcleo compartilhado: config, saneamento do texto, controle do áudio |
 | `clarisse/clarisse.ps1` | Motor: gera o áudio e reproduz |
-| Hook `Stop` | Fala o resumo quando o Claude termina |
-| Hook `Notification` | Fala quando o Claude para pedindo permissão |
-| Hook `SessionStart` | Religa a voz a cada sessão nova |
+| `clarisse/atalhos.ps1` | Escutador residente dos atalhos globais |
+| Hook `Stop` | Enfileira o resumo e bipa quando o Claude termina |
+| Hook `Notification` | **Fala** quando o Claude para pedindo permissão — aqui ele está travado esperando você |
+| Hook `SessionStart` | Religa a voz e sobe o escutador a cada sessão nova |
 | `comandos/clarisse.md` | Slash command `/clarisse` |
 | `docs/INSTRUCOES-CLAUDE.md` | Bloco anexado ao seu `CLAUDE.md` que instrui o Claude a escrever o resumo |
+
+### Atalhos
+
+| Tecla | O que faz |
+|---|---|
+| `Ctrl+Alt+L` | Lê o resumo que está na fila |
+| `Ctrl+Alt+P` | Pausa a fala; aperte de novo e ela **retoma do mesmo ponto** |
+| `Ctrl+Alt+X` | Cancela a fala na hora |
+
+As três combinações são configuráveis. Elas funcionam com qualquer janela em foco — inclusive fora do terminal.
+
+Isso exige um processo residente: um `powershell.exe` oculto registra as teclas via `RegisterHotKey` do Win32 e dorme em `GetMessage`, sem consumir CPU. Ele **continua rodando depois que você fecha o Claude Code** — é o que faz o atalho responder a qualquer momento. `/clarisse status` mostra se ele está de pé e `/clarisse atalhos off` o encerra.
+
+A pausa é pausa de verdade, não um "matar e recomeçar": o reprodutor lê um arquivo de controle a cada 120 ms e usa `Pause()`/`Play()` do `MediaPlayer`.
 
 Se o Claude não escrever o resumo, nada é falado — o sistema falha em silêncio, nunca fala lixo.
 
@@ -69,8 +94,11 @@ Depois, abra `/hooks` uma vez no Claude Code ou reinicie — hooks são lidos na
 | Comando | O que faz |
 |---|---|
 | `/clarisse` | Mostra o status |
-| `/clarisse pausar` | Corta a fala **na hora** e silencia |
-| `/clarisse continuar` | Volta a falar |
+| `/clarisse ler` | Lê o resumo da fila (mesmo efeito do `Ctrl+Alt+L`) |
+| `/clarisse pausar` | Congela a fala; de novo, retoma do mesmo ponto |
+| `/clarisse cancelar` | Corta a fala **na hora** |
+| `/clarisse atalhos off` | Encerra o escutador de atalhos |
+| `/clarisse atalhos on` | Sobe o escutador de atalhos |
 | `/clarisse repetir` | Repete a última fala |
 | `/clarisse repetir 2` | Repete a penúltima (guarda as 5 últimas) |
 | `/clarisse repetir devagar` | Repete mais lenta — para quando o número passou rápido |
@@ -114,12 +142,22 @@ Nada é enviado enquanto a Clarisse estiver pausada.
   "voice": "pt-BR-ThalitaMultilingualNeural",
   "rate": "+12%",
   "volume": "+0%",
-  "maxChars": 700,
-  "python": ""
+  "maxChars": 1800,
+  "python": "",
+  "atalhos": {
+    "ativo": true,
+    "ler": "Ctrl+Alt+L",
+    "pausar": "Ctrl+Alt+P",
+    "cancelar": "Ctrl+Alt+X"
+  }
 }
 ```
 
-`python` vazio faz o script detectar o interpretador sozinho. `maxChars` corta falas longas demais.
+`python` vazio faz o script detectar o interpretador sozinho. `maxChars` corta falas longas demais — 1800 dá cerca de um minuto e meio de áudio.
+
+As combinações aceitam `Ctrl`, `Alt`, `Shift` e `Win` mais uma tecla (`L`, `F9`, `Up`, `Space`...). Depois de trocar, rode `/clarisse atalhos off` e `/clarisse atalhos on`. Se outro programa já usar a combinação, o Windows recusa e o motivo aparece em `clarisse.log`.
+
+`atalhos.ativo` em `false` impede o escutador de subir junto com a sessão.
 
 ## Trocar o nome dela
 
@@ -141,7 +179,10 @@ Remove os hooks, o comando e o bloco do `CLAUDE.md`. A pasta `~/.claude/clarisse
 | Fala o teste mas não o resumo | O bloco de instruções não está no `CLAUDE.md`; rode o instalador sem `-SemInstrucoes` |
 | Silêncio total e nenhum erro | Veja `~/.claude/clarisse/clarisse.log` |
 | `Python nao encontrado` | Preencha o caminho no campo `python` do `config.json` |
-| Fala cortada no meio | Alguém rodou `/clarisse pausar` — use `/clarisse continuar` |
+| Fala cortada no meio | Alguém apertou `Ctrl+Alt+X` ou rodou `/clarisse pausar` — use `/clarisse continuar` |
+| Bipa mas o atalho não faz nada | O escutador caiu ou outro programa tomou a tecla. Veja `/clarisse status` e `clarisse.log`; use `/clarisse ler` enquanto isso |
+| Atalho continua ativo com o Claude fechado | É o esperado. `/clarisse atalhos off` encerra o processo residente |
+| Bipe não sai | Alguns notebooks silenciam o canal de sistema. Ponha `atalhos.ativo` em `false` e volte ao modo automático, ou confira o mixer do Windows |
 
 ## Licença
 
