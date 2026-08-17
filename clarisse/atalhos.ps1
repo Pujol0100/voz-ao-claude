@@ -85,12 +85,9 @@ try {
         # o laco nunca fica preso esperando o audio terminar.
         switch ($msg.wParam.ToInt32()) {
             1 {
-                $texto = Read-Pendente
-                if ([string]::IsNullOrWhiteSpace($texto)) {
-                    Start-FalaAssincrona 'Nada novo para ler.' -PularHistorico
-                } else {
-                    Start-FalaAssincrona $texto -PularHistorico
-                }
+                $item = Read-Pendente
+                if ($item) { Start-FalaAssincrona (Format-FalaPendente $item) -PularHistorico }
+                else       { Start-FalaAssincrona 'Nada novo para ler.' -PularHistorico }
             }
             2 { Switch-Pausa | Out-Null }
             3 { Stop-Fala | Out-Null }

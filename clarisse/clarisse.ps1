@@ -84,15 +84,16 @@ switch ($Mode) {
     }
 
     'ler' {
-        $texto = Read-Pendente
-        if ([string]::IsNullOrWhiteSpace($texto)) {
+        $item = Read-Pendente
+        if (-not $item) {
             Start-FalaAssincrona 'Nada novo para ler.' -PularHistorico
             Write-Output 'Clarisse: nada pendente'
             break
         }
         # O texto ja foi historiado no hook Stop; nao duplicar.
-        Start-FalaAssincrona $texto -PularHistorico
-        Write-Output 'Clarisse: lendo o resumo pendente'
+        Start-FalaAssincrona (Format-FalaPendente $item) -PularHistorico
+        $de = if ($item.projeto) { " de $($item.projeto)" } else { '' }
+        Write-Output "Clarisse: lendo o resumo$de ($($item.restantes) ainda na fila)"
     }
 
     'alternar-pausa' {
@@ -160,11 +161,12 @@ switch ($Mode) {
         $estado = if ($cfg.enabled) { 'ATIVA' } else { 'PAUSADA' }
         $auto = if (($cfg.PSObject.Properties.Name -contains 'autoStart') -and (-not $cfg.autoStart)) { 'nao' } else { 'sim' }
         $qtd = (Get-ItensHistorico).Count
-        $fila = if (Test-Pendente) { 'sim' } else { 'nao' }
+        $qtdFila = Get-PendenteCount
+        $fila = if ($qtdFila -eq 0) { 'nenhum' } else { "$qtdFila ($((Get-ProjetosNaFila) -join ', '))" }
         $atalhos = if (Test-AtalhosAtivos) {
             "ATIVOS ($($cfg.atalhos.ler) le / $($cfg.atalhos.pausar) pausa / $($cfg.atalhos.cancelar) cancela)"
         } else { 'DESLIGADOS' }
-        Write-Output "Clarisse: $estado | atalhos: $atalhos | resumo esperando: $fila | voz: $($cfg.voice) | velocidade: $($cfg.rate) | liga sozinha: $auto | falas guardadas: $qtd"
+        Write-Output "Clarisse: $estado | atalhos: $atalhos | resumos na fila: $fila | voz: $($cfg.voice) | velocidade: $($cfg.rate) | liga sozinha: $auto | falas guardadas: $qtd"
     }
 
     'test' {
@@ -195,7 +197,8 @@ switch ($Mode) {
             $resumo = Get-Content $FalaPath -Raw -Encoding utf8
             Remove-Item $FalaPath -Force -ErrorAction SilentlyContinue
             if (-not [string]::IsNullOrWhiteSpace($resumo)) {
-                Set-Pendente $resumo
+                $projeto = Get-NomeProjeto (Get-CwdDoHook (Read-StdinDoHook))
+                Add-Pendente $resumo $projeto
                 # Historia aqui para que /clarisse repetir funcione mesmo em
                 # resumo que o usuario nunca chegou a mandar ler.
                 Add-Historico (ConvertTo-Falavel $resumo $cfg.maxChars)
@@ -206,9 +209,10 @@ switch ($Mode) {
 
     'notify' {
         # Hook Notification: o Claude Code manda um JSON no stdin.
-        # Continua falando sozinho: aqui o Claude esta parado esperando voce.
+        # Continua falando sozinho: aqui o Claude esta parado esperando voce,
+        # e com varias sessoes abertas a fala precisa dizer qual delas.
         if (-not $cfg.enabled) { exit 0 }
-        $bruto = [Console]::In.ReadToEnd()
+        $bruto = Read-StdinDoHook
         $msg = ''
         if ($bruto) {
             try {
@@ -218,18 +222,7 @@ switch ($Mode) {
                 $msg = $bruto
             }
         }
-        if ($msg) {
-            $traducoes = @{
-                'needs your permission'  = 'Preciso da sua permissao para continuar.'
-                'waiting for your input' = 'Estou esperando sua resposta.'
-                'is waiting'             = 'Estou esperando sua resposta.'
-            }
-            $falado = $null
-            foreach ($chave in $traducoes.Keys) {
-                if ($msg -like "*$chave*") { $falado = $traducoes[$chave]; break }
-            }
-            if (-not $falado) { $falado = $msg }
-            Start-FalaAssincrona $falado
-        }
+        $falado = Format-FalaNotificacao $msg (Get-NomeProjeto (Get-CwdDoHook $bruto))
+        if ($falado) { Start-FalaAssincrona $falado }
     }
 }

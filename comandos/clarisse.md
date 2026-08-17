@@ -15,7 +15,7 @@ O normal e usar as teclas, nao este comando: `Ctrl+Alt+L` le, `Ctrl+Alt+P` pausa
 
 | Argumento | Modo / acao |
 |---|---|
-| `ler`, `le`, `fala`, `o que voce fez` | `-Mode ler` — fala o resumo que esta na fila (mesmo efeito do Ctrl+Alt+L) |
+| `ler`, `le`, `fala`, `o que voce fez` | `-Mode ler` — fala o proximo resumo da fila (mesmo efeito do Ctrl+Alt+L) |
 | `pausar`, `pausa`, `espera` | `-Mode alternar-pausa` — congela a fala; de novo, retoma do mesmo ponto |
 | `retomar`, `continua a fala` | `-Mode alternar-pausa` |
 | `cancelar`, `cala`, `para`, `silencio` | `-Mode cancelar` — corta a fala em curso na hora |
@@ -44,6 +44,8 @@ Ajustes que exigem editar o `config.json` e depois rodar `-Mode test`:
 | `atalho pausar <combinacao>` | `atalhos.pausar`, mesmo procedimento |
 | `atalho cancelar <combinacao>` | `atalhos.cancelar`, mesmo procedimento |
 | `resumo mais longo` / `mais curto` | `maxChars`, entre 700 e 4000 |
+
+Varias sessoes do Claude Code compartilham a mesma fila. `-Mode ler` entrega o resumo mais recente de qualquer uma delas, dizendo de qual projeto veio, e `-Mode status` mostra quantos ainda esperam e de quais projetos.
 
 Se o argumento nao corresponder a nada acima, rode `-Mode status` e liste as opcoes validas em uma linha.
 

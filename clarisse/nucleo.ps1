@@ -11,7 +11,8 @@ if (-not $ClarisseRoot) { $ClarisseRoot = $PSScriptRoot }
 $Root           = $ClarisseRoot
 $ConfigPath     = Join-Path $Root 'config.json'
 $FalaPath       = Join-Path $Root 'fala.txt'
-$PendentePath   = Join-Path $Root 'pendente.txt'
+$FilaDir        = Join-Path $Root 'fila'
+$PendenteLegado = Join-Path $Root 'pendente.txt'
 $ControlePath   = Join-Path $Root 'controle.txt'
 $HistPath       = Join-Path $Root 'historico.txt'
 $PidPath        = Join-Path $Root 'player.pid'
@@ -151,23 +152,144 @@ function Switch-Pausa {
 }
 
 # ------------------------------------------------------- fila de pendencia
+#
+# Uma pasta com um arquivo por resumo, nome ordenavel pelo instante de criacao.
+# Tem que ser uma fila, e nao um arquivo unico: todas as sessoes do Claude Code
+# compartilham esta pasta, e com arquivo unico a sessao que termina depois apaga
+# o resumo da que terminou antes - o usuario nunca ouve o primeiro.
 
-function Set-Pendente([string]$texto) {
-    [System.IO.File]::WriteAllText($PendentePath, $texto, $Utf8SemBom)
+$MaxFila = 20
+
+function Get-ArquivosFila {
+    Import-PendenteLegado
+    if (-not (Test-Path $FilaDir)) { return @() }
+    return @(Get-ChildItem -Path $FilaDir -Filter '*.json' -File -ErrorAction SilentlyContinue | Sort-Object Name)
+}
+
+# Aproveita o pendente.txt de uma instalacao anterior em vez de descarta-lo.
+function Import-PendenteLegado {
+    if (-not (Test-Path $PendenteLegado)) { return }
+    try {
+        $t = [System.IO.File]::ReadAllText($PendenteLegado, [System.Text.Encoding]::UTF8)
+        Remove-Item $PendenteLegado -Force -ErrorAction SilentlyContinue
+        Add-Pendente $t ''
+    } catch { }
+}
+
+function Add-Pendente([string]$texto, [string]$projeto) {
+    if ([string]::IsNullOrWhiteSpace($texto)) { return }
+    if (-not (Test-Path $FilaDir)) { New-Item -ItemType Directory -Force $FilaDir | Out-Null }
+
+    # Duas sessoes podem terminar no mesmo milissegundo; o guid desempata.
+    $nome = "$((Get-Date).ToString('yyyyMMddHHmmssfff'))-$([guid]::NewGuid().ToString('N').Substring(0,8)).json"
+    $dados = [pscustomobject]@{ projeto = $projeto; texto = $texto }
+    [System.IO.File]::WriteAllText((Join-Path $FilaDir $nome), ($dados | ConvertTo-Json -Depth 3), $Utf8SemBom)
+
+    $arquivos = @(Get-ChildItem -Path $FilaDir -Filter '*.json' -File | Sort-Object Name)
+    if ($arquivos.Count -gt $MaxFila) {
+        $arquivos[0..($arquivos.Count - $MaxFila - 1)] | Remove-Item -Force -ErrorAction SilentlyContinue
+    }
+}
+
+function Get-PendenteCount {
+    return (Get-ArquivosFila).Count
 }
 
 function Test-Pendente {
-    if (-not (Test-Path $PendentePath)) { return $false }
-    try { $t = [System.IO.File]::ReadAllText($PendentePath, [System.Text.Encoding]::UTF8) } catch { return $false }
-    return -not [string]::IsNullOrWhiteSpace($t)
+    return (Get-ArquivosFila).Count -gt 0
 }
 
-# Entrega o resumo pendente e o consome: ler duas vezes nao repete a fala.
+# Entrega o resumo mais recente e o consome. O mais novo primeiro porque e o
+# que acabou de bipar; os antigos continuam na fila esperando a vez.
 function Read-Pendente {
-    if (-not (Test-Path $PendentePath)) { return '' }
-    try { $t = [System.IO.File]::ReadAllText($PendentePath, [System.Text.Encoding]::UTF8) } catch { return '' }
-    Remove-Item $PendentePath -Force -ErrorAction SilentlyContinue
+    $arquivos = Get-ArquivosFila
+    if ($arquivos.Count -eq 0) { return $null }
+    $alvo = $arquivos[-1]
+    try {
+        $dados = [System.IO.File]::ReadAllText($alvo.FullName, [System.Text.Encoding]::UTF8) | ConvertFrom-Json
+    } catch {
+        Remove-Item $alvo.FullName -Force -ErrorAction SilentlyContinue
+        return $null
+    }
+    Remove-Item $alvo.FullName -Force -ErrorAction SilentlyContinue
+    return @{
+        texto     = [string]$dados.texto
+        projeto   = [string]$dados.projeto
+        restantes = $arquivos.Count - 1
+    }
+}
+
+# Quem esta esperando, do mais recente para o mais antigo, sem repetir projeto.
+function Get-ProjetosNaFila {
+    $nomes = New-Object System.Collections.ArrayList
+    $arquivos = Get-ArquivosFila
+    for ($i = $arquivos.Count - 1; $i -ge 0; $i--) {
+        try { $dados = [System.IO.File]::ReadAllText($arquivos[$i].FullName, [System.Text.Encoding]::UTF8) | ConvertFrom-Json } catch { continue }
+        $nome = if ($dados.projeto) { [string]$dados.projeto } else { 'sem nome' }
+        if (-not $nomes.Contains($nome)) { [void]$nomes.Add($nome) }
+    }
+    return $nomes.ToArray()
+}
+
+$NumeroPorExtenso = @{
+    1 = 'um'; 2 = 'dois'; 3 = 'tres'; 4 = 'quatro'; 5 = 'cinco';
+    6 = 'seis'; 7 = 'sete'; 8 = 'oito'; 9 = 'nove'; 10 = 'dez'
+}
+
+# Monta o que sai pela voz: de onde veio, o resumo, e quantos ainda esperam.
+function Format-FalaPendente($item) {
+    $t = $item.texto
+    if ($item.projeto) { $t = "No projeto $($item.projeto): $t" }
+    $n = [int]$item.restantes
+    if ($n -eq 1) {
+        $t = "$t Tem mais um resumo esperando."
+    } elseif ($n -gt 1) {
+        $q = if ($NumeroPorExtenso.ContainsKey($n)) { $NumeroPorExtenso[$n] } else { "$n" }
+        $t = "$t Tem mais $q resumos esperando."
+    }
     return $t
+}
+
+# Com varias sessoes abertas, "estou esperando sua resposta" nao diz nada:
+# o usuario precisa saber para qual terminal ir.
+function Format-FalaNotificacao([string]$msg, [string]$projeto) {
+    if ([string]::IsNullOrWhiteSpace($msg)) { return '' }
+    $traducoes = @(
+        @{ chave = 'needs your permission';  comProjeto = 'precisa da sua permissao para continuar.'; sozinho = 'Preciso da sua permissao para continuar.' },
+        @{ chave = 'waiting for your input'; comProjeto = 'esta esperando sua resposta.';             sozinho = 'Estou esperando sua resposta.' },
+        @{ chave = 'is waiting';             comProjeto = 'esta esperando sua resposta.';             sozinho = 'Estou esperando sua resposta.' }
+    )
+    foreach ($t in $traducoes) {
+        if ($msg -like "*$($t.chave)*") {
+            if ($projeto) { return "O projeto $projeto $($t.comProjeto)" }
+            return $t.sozinho
+        }
+    }
+    if ($projeto) { return "No projeto ${projeto}: $msg" }
+    return $msg
+}
+
+function Get-NomeProjeto([string]$cwd) {
+    if ([string]::IsNullOrWhiteSpace($cwd)) { return '' }
+    try { return Split-Path -Leaf $cwd.TrimEnd('\', '/') } catch { return '' }
+}
+
+# O Claude Code manda um JSON no stdin dos hooks, com o diretorio da sessao.
+function Get-CwdDoHook([string]$bruto) {
+    if ([string]::IsNullOrWhiteSpace($bruto)) { return '' }
+    try {
+        $dados = $bruto | ConvertFrom-Json
+        if ($dados.cwd) { return [string]$dados.cwd }
+    } catch { }
+    return ''
+}
+
+# Le o stdin sem travar quando o script e chamado a mao num terminal.
+function Read-StdinDoHook {
+    try {
+        if (-not [Console]::IsInputRedirected) { return '' }
+        return [Console]::In.ReadToEnd()
+    } catch { return '' }
 }
 
 # Aviso curto de "tem resumo esperando". Silencioso se o hardware recusar.

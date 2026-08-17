@@ -47,7 +47,7 @@ você fala  ──►  Claude Code (voice mode)  ──►  Claude trabalha
 | `clarisse/clarisse.ps1` | Motor: gera o áudio e reproduz |
 | `clarisse/atalhos.ps1` | Escutador residente dos atalhos globais |
 | Hook `Stop` | Enfileira o resumo e bipa quando o Claude termina |
-| Hook `Notification` | **Fala** quando o Claude para pedindo permissão — aqui ele está travado esperando você |
+| Hook `Notification` | **Fala** qual projeto parou pedindo permissão — ali o Claude está travado esperando você |
 | Hook `SessionStart` | Religa a voz e sobe o escutador a cada sessão nova |
 | `comandos/clarisse.md` | Slash command `/clarisse` |
 | `docs/INSTRUCOES-CLAUDE.md` | Bloco anexado ao seu `CLAUDE.md` que instrui o Claude a escrever o resumo |
@@ -65,6 +65,20 @@ As três combinações são configuráveis. Elas funcionam com qualquer janela e
 Isso exige um processo residente: um `powershell.exe` oculto registra as teclas via `RegisterHotKey` do Win32 e dorme em `GetMessage`, sem consumir CPU. Ele **continua rodando depois que você fecha o Claude Code** — é o que faz o atalho responder a qualquer momento. `/clarisse status` mostra se ele está de pé e `/clarisse atalhos off` o encerra.
 
 A pausa é pausa de verdade, não um "matar e recomeçar": o reprodutor lê um arquivo de controle a cada 120 ms e usa `Pause()`/`Play()` do `MediaPlayer`.
+
+### Várias sessões abertas ao mesmo tempo
+
+Todas as sessões do Claude Code compartilham a mesma pasta `~/.claude/clarisse`, e o atalho é global no nível do sistema operacional — ele não tem como saber qual terminal você está olhando.
+
+Por isso os resumos entram numa **fila**, um arquivo por resumo, e cada um é anunciado com a origem:
+
+> *"No projeto voz-ao-claude: rodei os vinte e sete testes e todos passaram. Tem mais um resumo esperando."*
+
+`Ctrl+Alt+L` entrega o mais recente primeiro e vai descendo. Nada é sobrescrito: se três sessões terminam juntas, os três resumos esperam a sua vez. A fila guarda 20 e descarta os mais antigos além disso.
+
+Os pedidos de permissão também dizem de quem são: *"O projeto cadeia-sequencial precisa da sua permissão para continuar."*
+
+`/clarisse status` mostra quantos resumos esperam e de quais projetos.
 
 Se o Claude não escrever o resumo, nada é falado — o sistema falha em silêncio, nunca fala lixo.
 
@@ -94,7 +108,7 @@ Depois, abra `/hooks` uma vez no Claude Code ou reinicie — hooks são lidos na
 | Comando | O que faz |
 |---|---|
 | `/clarisse` | Mostra o status |
-| `/clarisse ler` | Lê o resumo da fila (mesmo efeito do `Ctrl+Alt+L`) |
+| `/clarisse ler` | Lê o próximo resumo da fila (mesmo efeito do `Ctrl+Alt+L`) |
 | `/clarisse pausar` | Congela a fala; de novo, retoma do mesmo ponto |
 | `/clarisse cancelar` | Corta a fala **na hora** |
 | `/clarisse atalhos off` | Encerra o escutador de atalhos |
@@ -181,6 +195,7 @@ Remove os hooks, o comando e o bloco do `CLAUDE.md`. A pasta `~/.claude/clarisse
 | `Python nao encontrado` | Preencha o caminho no campo `python` do `config.json` |
 | Fala cortada no meio | Alguém apertou `Ctrl+Alt+X` ou rodou `/clarisse pausar` — use `/clarisse continuar` |
 | Bipa mas o atalho não faz nada | O escutador caiu ou outro programa tomou a tecla. Veja `/clarisse status` e `clarisse.log`; use `/clarisse ler` enquanto isso |
+| Leu o resumo de outro terminal | É a fila fazendo o trabalho dela: ela entrega o mais recente de qualquer sessão, dizendo de qual projeto veio. Aperte de novo para ouvir o próximo |
 | Atalho continua ativo com o Claude fechado | É o esperado. `/clarisse atalhos off` encerra o processo residente |
 | Bipe não sai | Alguns notebooks silenciam o canal de sistema. Ponha `atalhos.ativo` em `false` e volte ao modo automático, ou confira o mixer do Windows |
 
