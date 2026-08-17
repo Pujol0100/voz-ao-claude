@@ -1,7 +1,10 @@
 # Estado local da Clarisse - nunca versionar
 clarisse/fala.txt
+clarisse/pendente.txt
+clarisse/controle.txt
 clarisse/historico.txt
 clarisse/player.pid
+clarisse/atalhos.pid
 clarisse/clarisse.log
 clarisse/pending/
 

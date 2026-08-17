@@ -96,6 +96,10 @@ function Set-HookEvento($settings, [string]$evento, $entrada) {
 if ($Desinstalar) {
     Titulo 'Desinstalando a Clarisse'
 
+    if (Test-Path $ScriptDest) {
+        try { & $ScriptDest -Mode atalhos-off | Out-Null; Passo 'escutador de atalhos encerrado' } catch { }
+    }
+
     if (Test-Path $SettingsPath) {
         $bkp = "$SettingsPath.bak"
         Copy-Item $SettingsPath $bkp -Force
@@ -154,12 +158,36 @@ Passo 'edge-tts instalado'
 Titulo '2/5  Arquivos'
 New-Item -ItemType Directory -Force $DestClarisse | Out-Null
 New-Item -ItemType Directory -Force $DestComandos | Out-Null
-Copy-Item (Join-Path $Origem 'clarisse\clarisse.ps1') $ScriptDest -Force
-Passo "motor de voz em $ScriptDest"
+
+# Encerra um escutador de versao anterior antes de sobrescrever os scripts.
+if (Test-Path $ScriptDest) {
+    try { & $ScriptDest -Mode atalhos-off | Out-Null } catch { }
+}
+
+foreach ($arq in @('clarisse.ps1', 'nucleo.ps1', 'atalhos.ps1')) {
+    Copy-Item (Join-Path $Origem "clarisse\$arq") (Join-Path $DestClarisse $arq) -Force
+}
+Passo "motor de voz, nucleo e escutador de atalhos em $DestClarisse"
 
 $destConfig = Join-Path $DestClarisse 'config.json'
 if (Test-Path $destConfig) {
-    Passo 'config.json ja existe - mantido como esta'
+    # Config existente e preservado; so ganha os campos que a versao nova exige.
+    $atual = Get-Content $destConfig -Raw -Encoding utf8 | ConvertFrom-Json
+    $mudou = $false
+    if ($atual.PSObject.Properties.Name -notcontains 'atalhos') {
+        $atual | Add-Member -NotePropertyName atalhos -NotePropertyValue ([pscustomobject]@{
+            ativo = $true; ler = 'Ctrl+Alt+L'; pausar = 'Ctrl+Alt+P'; cancelar = 'Ctrl+Alt+X'
+        }) -Force
+        $mudou = $true
+        Passo 'config.json ganhou o bloco de atalhos'
+    }
+    if ($atual.maxChars -lt 1800) {
+        $atual.maxChars = 1800
+        $mudou = $true
+        Passo 'config.json: limite da fala ampliado para 1800 caracteres'
+    }
+    if ($mudou) { $atual | ConvertTo-Json -Depth 5 | Out-File $destConfig -Encoding utf8 }
+    else        { Passo 'config.json ja estava atualizado - mantido como esta' }
 } else {
     Copy-Item (Join-Path $Origem 'clarisse\config.json') $destConfig -Force
     Passo 'config.json criado com os padroes'
@@ -206,18 +234,31 @@ if ($SemInstrucoes) {
     if ($md -like "*$MarcadorIni*") {
         $md = [regex]::Replace($md, "(?s)$([regex]::Escape($MarcadorIni)).*?$([regex]::Escape($MarcadorFim))", "$MarcadorIni`n$bloco`n$MarcadorFim")
         Passo 'bloco de instrucoes atualizado no CLAUDE.md'
+        [System.IO.File]::WriteAllText($ClaudeMdPath, $md, $Utf8SemBom)
+    } elseif ($md -match '(?m)^#+\s*Clarisse\b') {
+        # Bloco colado a mao, sem os marcadores: anexar criaria uma segunda copia
+        # e o Claude passaria a receber duas instrucoes conflitantes.
+        Aviso 'ja existe um bloco da Clarisse no CLAUDE.md, mas sem os marcadores clarisse:inicio/clarisse:fim.'
+        Aviso 'apague esse bloco a mao e rode o instalador de novo - nada foi escrito no CLAUDE.md.'
     } else {
         $md = $md.TrimEnd() + "`n`n$MarcadorIni`n$bloco`n$MarcadorFim`n"
         Passo 'bloco de instrucoes anexado ao CLAUDE.md'
+        [System.IO.File]::WriteAllText($ClaudeMdPath, $md, $Utf8SemBom)
     }
-    [System.IO.File]::WriteAllText($ClaudeMdPath, $md, $Utf8SemBom)
 }
 
 # 5. Teste
-Titulo '5/5  Teste de voz'
+Titulo '5/5  Atalhos e teste de voz'
+& $ScriptDest -Mode atalhos-on
 & $ScriptDest -Mode test
 
 Write-Host ''
 Write-Host 'Instalacao concluida.' -ForegroundColor Green
 Write-Host 'Abra /hooks uma vez no Claude Code (ou reinicie) para os hooks entrarem em vigor.'
-Write-Host 'Depois disso, use /clarisse status, /clarisse pausar, /clarisse repetir.'
+Write-Host ''
+Write-Host 'Ctrl+Alt+L  ler o resumo pendente'
+Write-Host 'Ctrl+Alt+P  pausar e retomar do mesmo ponto'
+Write-Host 'Ctrl+Alt+X  cancelar a fala'
+Write-Host ''
+Write-Host 'Quando o Claude terminar, voce ouve um bipe curto - a fala so sai no Ctrl+Alt+L.'
+Write-Host 'Use /clarisse status, /clarisse atalhos off, /clarisse repetir.'
