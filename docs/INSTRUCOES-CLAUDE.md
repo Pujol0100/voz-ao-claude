@@ -1,9 +1,18 @@
 # Clarisse — resumo falado
 
 `<required>` Ao terminar **cada** resposta, escreva o resumo falado em
-`{{CLARISSE_DIR}}\fala.txt` (UTF-8, sobrescrevendo).
+`{{CLARISSE_DIR}}\entrada\<projeto>.txt` (UTF-8, sobrescrevendo), onde
+`<projeto>` e o nome da **ultima pasta do seu diretorio de trabalho**. Se voce
+esta trabalhando em `C:\dev\omni-api`, o arquivo e
+`{{CLARISSE_DIR}}\entrada\omni-api.txt`.
 Um hook guarda esse texto na fila e emite um bipe. O usuario aperta `Ctrl+Alt+L`
 para ouvir quando quiser. Se voce nao escrever, nada fica na fila. `</required>`
+
+**Por que o nome do projeto no arquivo:** varias sessoes do Claude Code
+compartilham esta pasta. Com um arquivo unico, a sessao que escreve por ultimo
+apaga o resumo da anterior antes de qualquer hook ler - e o usuario perde o
+resumo sem nunca saber. Uma caixa por projeto resolve, e o nome do arquivo e o
+que diz a voz de onde o resumo veio.
 
 ## A regra que importa: diga o conteudo, nao o aviso
 

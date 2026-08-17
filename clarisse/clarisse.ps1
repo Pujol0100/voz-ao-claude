@@ -193,17 +193,17 @@ switch ($Mode) {
         # Hook Stop: nao fala. Enfileira o resumo deixado pelo Claude e bipa.
         # O arquivo fala.txt e consumido; quem fala e o modo 'ler'.
         if (-not $cfg.enabled) { exit 0 }
-        if (Test-Path $FalaPath) {
-            $resumo = Get-Content $FalaPath -Raw -Encoding utf8
-            Remove-Item $FalaPath -Force -ErrorAction SilentlyContinue
-            if (-not [string]::IsNullOrWhiteSpace($resumo)) {
-                $projeto = Get-NomeProjeto (Get-CwdDoHook (Read-StdinDoHook))
-                Add-Pendente $resumo $projeto
+        # Recolhe a caixa de todos os projetos, nao so a desta sessao: a origem
+        # vem do nome do arquivo, entao qualquer hook recolhe com atribuicao
+        # certa e nenhum resumo fica preso esperando sua sessao terminar.
+        $novos = Import-Entradas
+        if ($novos.Count -gt 0) {
+            foreach ($n in $novos) {
                 # Historia aqui para que /clarisse repetir funcione mesmo em
                 # resumo que o usuario nunca chegou a mandar ler.
-                Add-Historico (ConvertTo-Falavel $resumo $cfg.maxChars)
-                Send-Bipe
+                Add-Historico (ConvertTo-Falavel $n.texto $cfg.maxChars)
             }
+            Send-Bipe
         }
     }
 

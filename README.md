@@ -43,7 +43,7 @@ você fala  ──►  Claude Code (voice mode)  ──►  Claude trabalha
 
 | Peça | Papel |
 |---|---|
-| `clarisse/nucleo.ps1` | Núcleo compartilhado: config, saneamento do texto, controle do áudio |
+| `clarisse/nucleo.ps1` | Núcleo compartilhado: config, saneamento do texto, caixa de entrada, fila, controle do áudio |
 | `clarisse/clarisse.ps1` | Motor: gera o áudio e reproduz |
 | `clarisse/atalhos.ps1` | Escutador residente dos atalhos globais |
 | Hook `Stop` | Enfileira o resumo e bipa quando o Claude termina |
@@ -70,11 +70,13 @@ A pausa é pausa de verdade, não um "matar e recomeçar": o reprodutor lê um a
 
 Todas as sessões do Claude Code compartilham a mesma pasta `~/.claude/clarisse`, e o atalho é global no nível do sistema operacional — ele não tem como saber qual terminal você está olhando.
 
-Por isso os resumos entram numa **fila**, um arquivo por resumo, e cada um é anunciado com a origem:
+Por isso cada sessão escreve o resumo na **sua própria caixa** — `entrada/<projeto>.txt` — em vez de num arquivo único. De lá eles vão para uma **fila** de leitura, e cada um é anunciado com a origem:
 
 > *"No projeto voz-ao-claude: rodei os vinte e sete testes e todos passaram. Tem mais um resumo esperando."*
 
 `Ctrl+Alt+L` entrega o mais recente primeiro e vai descendo. Nada é sobrescrito: se três sessões terminam juntas, os três resumos esperam a sua vez. A fila guarda 20 e descarta os mais antigos além disso.
+
+A origem vem do **nome do arquivo**, não de qual sessão disparou o hook. Por isso qualquer sessão que termine recolhe tudo que estiver parado, sempre com a atribuição certa — nenhum resumo fica preso esperando aquela sessão específica terminar de novo.
 
 Os pedidos de permissão também dizem de quem são: *"O projeto cadeia-sequencial precisa da sua permissão para continuar."*
 
@@ -196,6 +198,7 @@ Remove os hooks, o comando e o bloco do `CLAUDE.md`. A pasta `~/.claude/clarisse
 | Fala cortada no meio | Alguém apertou `Ctrl+Alt+X` ou rodou `/clarisse pausar` — use `/clarisse continuar` |
 | Bipa mas o atalho não faz nada | O escutador caiu ou outro programa tomou a tecla. Veja `/clarisse status` e `clarisse.log`; use `/clarisse ler` enquanto isso |
 | Leu o resumo de outro terminal | É a fila fazendo o trabalho dela: ela entrega o mais recente de qualquer sessão, dizendo de qual projeto veio. Aperte de novo para ouvir o próximo |
+| Resumo veio sem dizer o projeto | O Claude escreveu no `fala.txt` antigo em vez da caixa do projeto. Funciona, mas sem identificar a origem — reinstale para atualizar o bloco no `CLAUDE.md` |
 | Atalho continua ativo com o Claude fechado | É o esperado. `/clarisse atalhos off` encerra o processo residente |
 | Bipe não sai | Alguns notebooks silenciam o canal de sistema. Ponha `atalhos.ativo` em `false` e volte ao modo automático, ou confira o mixer do Windows |
 

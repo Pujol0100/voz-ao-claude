@@ -11,6 +11,7 @@ if (-not $ClarisseRoot) { $ClarisseRoot = $PSScriptRoot }
 $Root           = $ClarisseRoot
 $ConfigPath     = Join-Path $Root 'config.json'
 $FalaPath       = Join-Path $Root 'fala.txt'
+$EntradaDir     = Join-Path $Root 'entrada'
 $FilaDir        = Join-Path $Root 'fila'
 $PendenteLegado = Join-Path $Root 'pendente.txt'
 $ControlePath   = Join-Path $Root 'controle.txt'
@@ -219,6 +220,56 @@ function Read-Pendente {
     }
 }
 
+# ------------------------------------------------- caixa de entrada por projeto
+#
+# O Claude escreve o resumo aqui, num arquivo com o nome do projeto. Nao pode
+# ser um arquivo unico: as sessoes compartilham esta pasta e a que escreve por
+# ultimo apagaria o resumo da anterior antes de qualquer hook ler.
+#
+# O nome do arquivo e a fonte da verdade sobre a origem. Por isso o hook recolhe
+# TODAS as caixas, e nao so a do proprio projeto: qualquer sessao que termine
+# recolhe o que estiver parado, sempre com a atribuicao certa, e nada fica preso
+# esperando aquela sessao especifica terminar de novo.
+
+function Get-CaminhoEntrada([string]$projeto) {
+    if ([string]::IsNullOrWhiteSpace($projeto)) { return '' }
+    $limpo = $projeto
+    foreach ($c in [System.IO.Path]::GetInvalidFileNameChars()) { $limpo = $limpo.Replace($c, '-') }
+    return (Join-Path $EntradaDir "$limpo.txt")
+}
+
+# Move tudo que esta na caixa de entrada para a fila de leitura.
+# Devolve o que enfileirou, para o chamador historiar e decidir se bipa.
+function Import-Entradas {
+    $novos = New-Object System.Collections.ArrayList
+
+    if (Test-Path $EntradaDir) {
+        $caixas = @(Get-ChildItem -Path $EntradaDir -Filter '*.txt' -File -ErrorAction SilentlyContinue | Sort-Object LastWriteTime)
+        foreach ($caixa in $caixas) {
+            try { $texto = [System.IO.File]::ReadAllText($caixa.FullName, [System.Text.Encoding]::UTF8) } catch { continue }
+            Remove-Item $caixa.FullName -Force -ErrorAction SilentlyContinue
+            if ([string]::IsNullOrWhiteSpace($texto)) { continue }
+            Add-Pendente $texto $caixa.BaseName
+            [void]$novos.Add(@{ projeto = $caixa.BaseName; texto = $texto })
+        }
+    }
+
+    # fala.txt de uma instalacao anterior: entra sem projeto, porque nao da para
+    # saber de qual sessao veio - e etiqueta errada e pior que etiqueta nenhuma.
+    if (Test-Path $FalaPath) {
+        try { $texto = [System.IO.File]::ReadAllText($FalaPath, [System.Text.Encoding]::UTF8) } catch { $texto = '' }
+        Remove-Item $FalaPath -Force -ErrorAction SilentlyContinue
+        if (-not [string]::IsNullOrWhiteSpace($texto)) {
+            Add-Pendente $texto ''
+            [void]$novos.Add(@{ projeto = ''; texto = $texto })
+        }
+    }
+
+    # A virgula impede o PowerShell de desembrulhar array de um elemento so,
+    # o que faria .Count devolver o numero de chaves do hashtable.
+    return ,$novos.ToArray()
+}
+
 # Quem esta esperando, do mais recente para o mais antigo, sem repetir projeto.
 function Get-ProjetosNaFila {
     $nomes = New-Object System.Collections.ArrayList
@@ -228,7 +279,7 @@ function Get-ProjetosNaFila {
         $nome = if ($dados.projeto) { [string]$dados.projeto } else { 'sem nome' }
         if (-not $nomes.Contains($nome)) { [void]$nomes.Add($nome) }
     }
-    return $nomes.ToArray()
+    return ,$nomes.ToArray()
 }
 
 $NumeroPorExtenso = @{
