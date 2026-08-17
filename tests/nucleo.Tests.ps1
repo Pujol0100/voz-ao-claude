@@ -49,25 +49,7 @@ Describe 'controle de reproducao' {
     }
 }
 
-Describe 'fila de pendencia' {
-    It 'marca que ha resumo esperando' {
-        Set-Pendente 'Rodei os testes. Passaram os doze.'
-        Test-Pendente | Should Be $true
-    }
-    It 'entrega o texto e consome a pendencia' {
-        Set-Pendente 'texto pendente'
-        Read-Pendente | Should Be 'texto pendente'
-        Test-Pendente | Should Be $false
-    }
-    It 'devolve vazio quando nao ha pendencia' {
-        Remove-Item $PendentePath -Force -ErrorAction SilentlyContinue
-        Read-Pendente | Should BeNullOrEmpty
-    }
-    It 'nao considera pendencia um arquivo so com espaco' {
-        Set-Pendente "   `n  "
-        Test-Pendente | Should Be $false
-    }
-}
+# A fila de resumos pendentes tem testes proprios em fila.Tests.ps1.
 
 Describe 'ConvertTo-CodigoAtalho' {
     It 'traduz Ctrl+Alt+L' {

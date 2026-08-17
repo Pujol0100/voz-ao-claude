@@ -43,6 +43,8 @@ executar e pare para confirmar.
 ## Estilo do texto falado
 
 - Portugues falado, frases curtas. Sem markdown, sem bullets, sem tabelas.
+- Nao comece dizendo o nome do projeto: o sistema ja anuncia "No projeto tal"
+  antes do seu texto, porque varias sessoes compartilham a mesma fila.
 - Nunca leia caminho de arquivo, comando, bloco de codigo, URL ou hash. Diga
   "o script principal", "o arquivo de configuracao", "o teste de conversao".
 - Nunca escreva o resumo em ingles.
