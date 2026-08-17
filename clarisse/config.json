@@ -4,6 +4,12 @@
   "voice": "pt-BR-ThalitaMultilingualNeural",
   "rate": "+12%",
   "volume": "+0%",
-  "maxChars": 700,
-  "python": ""
+  "maxChars": 1800,
+  "python": "",
+  "atalhos": {
+    "ativo": true,
+    "ler": "Ctrl+Alt+L",
+    "pausar": "Ctrl+Alt+P",
+    "cancelar": "Ctrl+Alt+X"
+  }
 }
