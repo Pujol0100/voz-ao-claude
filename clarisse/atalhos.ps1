@@ -51,7 +51,8 @@ if (-not $cfg.atalhos) {
 $mapa = @(
     @{ id = 1; combo = [string]$cfg.atalhos.ler },
     @{ id = 2; combo = [string]$cfg.atalhos.pausar },
-    @{ id = 3; combo = [string]$cfg.atalhos.cancelar }
+    @{ id = 3; combo = [string]$cfg.atalhos.cancelar },
+    @{ id = 4; combo = [string]$cfg.atalhos.pular }
 )
 
 $registrados = @()
@@ -84,13 +85,13 @@ try {
         # Cada acao aqui e so escrita de arquivo ou disparo de processo:
         # o laco nunca fica preso esperando o audio terminar.
         switch ($msg.wParam.ToInt32()) {
-            1 {
-                $item = Read-Pendente
-                if ($item) { Start-FalaAssincrona (Format-FalaPendente $item) -PularHistorico }
-                else       { Start-FalaAssincrona 'Nada novo para ler.' -PularHistorico }
-            }
+            # Ler e passear tem logica (triagem, selecao, consumo da fila), e ela
+            # vive no clarisse.ps1, num lugar so. Pausar e cancelar sao escrita
+            # de arquivo, rapidos o bastante para ficarem aqui.
+            1 { Start-Modo 'ler' }
             2 { Switch-Pausa | Out-Null }
             3 { Stop-Fala | Out-Null }
+            4 { Start-Modo 'proximo' }
         }
     }
 } finally {

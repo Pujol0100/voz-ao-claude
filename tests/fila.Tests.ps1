@@ -9,6 +9,8 @@ New-Item -ItemType Directory -Force $ClarisseRoot | Out-Null
 function Reset-Fila {
     if (Test-Path $FilaDir) { Remove-Item $FilaDir -Recurse -Force }
     Remove-Item $PendenteLegado -Force -ErrorAction SilentlyContinue
+    Remove-Item $EmLeituraPath  -Force -ErrorAction SilentlyContinue
+    Remove-Item $SelecaoPath    -Force -ErrorAction SilentlyContinue
 }
 
 Describe 'fila de resumos' {
@@ -36,10 +38,13 @@ Describe 'fila de resumos' {
         $item.restantes | Should Be 1
     }
 
-    It 'consome o que entregou' {
+    It 'consome o que entregou depois que a leitura e confirmada' {
+        # Entregar e consumir sao passos separados de proposito: o resumo so sai
+        # do disco quando a fala chega ao fim. Ver triagem.Tests.ps1.
         Reset-Fila
         Add-Pendente 'unico' 'projeto-a'
         (Read-Pendente).texto | Should Be 'unico'
+        Complete-Leitura      | Out-Null
         Get-PendenteCount     | Should Be 0
         Read-Pendente         | Should BeNullOrEmpty
     }
@@ -48,8 +53,11 @@ Describe 'fila de resumos' {
         Reset-Fila
         1..3 | ForEach-Object { Add-Pendente "resumo $_" "projeto-$_" }
         (Read-Pendente).texto | Should Be 'resumo 3'
+        Complete-Leitura      | Out-Null
         (Read-Pendente).texto | Should Be 'resumo 2'
+        Complete-Leitura      | Out-Null
         (Read-Pendente).texto | Should Be 'resumo 1'
+        Complete-Leitura      | Out-Null
         Get-PendenteCount     | Should Be 0
     }
 
@@ -94,9 +102,17 @@ Describe 'Format-FalaPendente' {
         $r = Format-FalaPendente @{ projeto = 'p'; texto = 'Feito.'; restantes = 3 }
         $r | Should Match 'Tem mais tres resumos esperando\.$'
     }
-    It 'usa o numero quando a fila e grande demais para o extenso' {
+    It 'escreve por extenso qualquer contagem que a fila possa ter' {
+        # A fila tem teto de 20, entao a tabela cobre a faixa inteira: digito
+        # solto na fala sai lido de formas imprevisiveis.
         $r = Format-FalaPendente @{ projeto = 'p'; texto = 'Feito.'; restantes = 14 }
-        $r | Should Match 'Tem mais 14 resumos esperando\.$'
+        $r | Should Match 'Tem mais quatorze resumos esperando\.$'
+        $r | Should Not Match '\d'
+    }
+
+    It 'cai no numero como ultimo recurso, acima do que a tabela cobre' {
+        $r = Format-FalaPendente @{ projeto = 'p'; texto = 'Feito.'; restantes = 99 }
+        $r | Should Match 'Tem mais 99 resumos esperando\.$'
     }
     It 'nao inventa projeto quando nao sabe de onde veio' {
         $r = Format-FalaPendente @{ projeto = ''; texto = 'Os testes passaram.'; restantes = 0 }
@@ -225,6 +241,9 @@ Describe 'ordem da fila quando dois resumos chegam juntos' {
                 $item = Read-Pendente
                 if (-not $item) { break }
                 $saida += $item.texto
+                # Sem confirmar, o mesmo resumo volta para sempre: entregar nao
+                # consome mais. Foi assim que este laco travou a suite inteira.
+                Complete-Leitura | Out-Null
             }
             if (($saida -join '|') -ne 'resumo 5|resumo 4|resumo 3|resumo 2|resumo 1') { $erradas++ }
         }

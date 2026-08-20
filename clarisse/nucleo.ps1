@@ -15,6 +15,8 @@ $EntradaDir     = Join-Path $Root 'entrada'
 $FilaDir        = Join-Path $Root 'fila'
 $PendenteLegado = Join-Path $Root 'pendente.txt'
 $ControlePath   = Join-Path $Root 'controle.txt'
+$EmLeituraPath  = Join-Path $Root 'emleitura.txt'
+$SelecaoPath    = Join-Path $Root 'selecao.txt'
 $HistPath       = Join-Path $Root 'historico.txt'
 $PidPath        = Join-Path $Root 'player.pid'
 $AtalhosPidPath = Join-Path $Root 'atalhos.pid'
@@ -44,9 +46,11 @@ function Get-Config {
         volume    = '+0%'
         maxChars  = 1800
         python    = ''
+        triagem   = $true
         atalhos   = [pscustomobject]@{
             ativo    = $true
             ler      = 'Ctrl+Alt+L'
+            pular    = 'Ctrl+Alt+J'
             pausar   = 'Ctrl+Alt+P'
             cancelar = 'Ctrl+Alt+X'
         }
@@ -256,24 +260,204 @@ function Test-Pendente {
     return (Get-ArquivosFila).Count -gt 0
 }
 
-# Entrega o resumo mais recente e o consome. O mais novo primeiro porque e o
-# que acabou de bipar; os antigos continuam na fila esperando a vez.
-function Read-Pendente {
-    $arquivos = Get-ArquivosFila
-    if ($arquivos.Count -eq 0) { return $null }
-    $alvo = $arquivos[-1]
+# Le o conteudo de um arquivo da fila. Devolve $null se veio corrompido.
+function Read-DadosFila($arquivo) {
     try {
-        $dados = [System.IO.File]::ReadAllText($alvo.FullName, [System.Text.Encoding]::UTF8) | ConvertFrom-Json
+        return [System.IO.File]::ReadAllText($arquivo.FullName, [System.Text.Encoding]::UTF8) | ConvertFrom-Json
     } catch {
-        Remove-Item $alvo.FullName -Force -ErrorAction SilentlyContinue
         return $null
     }
-    Remove-Item $alvo.FullName -Force -ErrorAction SilentlyContinue
+}
+
+# Entrega um resumo para leitura, sem apaga-lo. Com -Projeto, entrega o mais
+# recente daquele projeto em vez do mais recente da fila.
+#
+# O resumo so sai do disco quando a fala termina de verdade (Complete-Leitura).
+# Antes, o arquivo era apagado no momento da entrega: quem cancelasse ao ouvir
+# "no projeto tal" e perceber que era o projeto errado perdia aquele resumo para
+# sempre. Cacar o resumo certo destruia todos os que passavam na frente.
+function Read-Pendente {
+    param([string]$Projeto = '')
+
+    # Uma leitura anterior que nao terminou devolve o resumo para a fila: se o
+    # processo que falava foi morto, ninguem chamou Complete nem Abort. Assim o
+    # pior caso e ouvir o mesmo resumo de novo, nunca perde-lo.
+    Abort-Leitura | Out-Null
+
+    $arquivos = Get-ArquivosFila
+    if ($arquivos.Count -eq 0) { return $null }
+
+    $alvo  = $null
+    $dados = $null
+
+    if ($Projeto) {
+        $busca = $Projeto.ToLower()
+        for ($i = $arquivos.Count - 1; $i -ge 0; $i--) {
+            $d = Read-DadosFila $arquivos[$i]
+            if (-not $d) { continue }
+            $nome = [string]$d.projeto
+            # Nome parcial serve: digitar "concil" tem de achar a conciliacao.
+            if ($nome -and $nome.ToLower().Contains($busca)) {
+                $alvo = $arquivos[$i]; $dados = $d; break
+            }
+        }
+        if (-not $alvo) { return $null }
+    } else {
+        $alvo  = $arquivos[-1]
+        $dados = Read-DadosFila $alvo
+        if (-not $dados) {
+            Remove-Item $alvo.FullName -Force -ErrorAction SilentlyContinue
+            return $null
+        }
+    }
+
+    [System.IO.File]::WriteAllText($EmLeituraPath, $alvo.Name, $Utf8SemBom)
     return @{
         texto     = [string]$dados.texto
         projeto   = [string]$dados.projeto
         restantes = $arquivos.Count - 1
     }
+}
+
+# A fala chegou ao fim: agora o resumo pode sair da fila.
+function Complete-Leitura {
+    if (-not (Test-Path $EmLeituraPath)) { return $false }
+    try { $nome = ([System.IO.File]::ReadAllText($EmLeituraPath)).Trim() } catch { $nome = '' }
+    Remove-Item $EmLeituraPath -Force -ErrorAction SilentlyContinue
+    if (-not $nome) { return $false }
+    $alvo = Join-Path $FilaDir $nome
+    if (Test-Path $alvo) {
+        Remove-Item $alvo -Force -ErrorAction SilentlyContinue
+        return $true
+    }
+    return $false
+}
+
+# A fala foi cortada: o resumo continua na fila esperando a vez.
+function Abort-Leitura {
+    if (-not (Test-Path $EmLeituraPath)) { return $false }
+    Remove-Item $EmLeituraPath -Force -ErrorAction SilentlyContinue
+    return $true
+}
+
+# Quem esta esperando e quantos resumos cada um deixou, do mais recente para o
+# mais antigo. E o que a triagem falada anuncia.
+function Get-ResumoDaFila {
+    $ordem  = New-Object System.Collections.ArrayList
+    $contas = @{}
+    $arquivos = Get-ArquivosFila
+    for ($i = $arquivos.Count - 1; $i -ge 0; $i--) {
+        $d = Read-DadosFila $arquivos[$i]
+        if (-not $d) { continue }
+        $nome = if ($d.projeto) { [string]$d.projeto } else { 'sem nome' }
+        if (-not $contas.ContainsKey($nome)) {
+            $contas[$nome] = 0
+            [void]$ordem.Add($nome)
+        }
+        $contas[$nome] = $contas[$nome] + 1
+    }
+    $saida = New-Object System.Collections.ArrayList
+    foreach ($n in $ordem) { [void]$saida.Add(@{ projeto = $n; quantos = $contas[$n] }) }
+    return $saida.ToArray()
+}
+
+# Traduz um numero pequeno para palavra, para a voz nao soletrar digito.
+function Get-PorExtenso([int]$n) {
+    if ($NumeroPorExtenso.ContainsKey($n)) { return $NumeroPorExtenso[$n] }
+    return "$n"
+}
+
+# Quantos nomes a triagem cita antes de resumir o resto. Medido com a fila real:
+# listar seis projetos com a contagem de cada um dava 334 caracteres, uns 25
+# segundos so para anunciar a lista - ouvir isso a cada leitura seria pior que o
+# problema que a triagem resolve.
+$MaxNomesTriagem = 5
+
+# A frase que a Clarisse fala antes de ler, quando ha mais de um projeto na fila.
+# Diz os totais e os nomes, nao a contagem de cada projeto: o que o usuario
+# precisa para escolher e saber quem esta esperando, e o resto ele ouve depois.
+# O hifen sai porque nome de pasta soletrado em voz alta e ilegivel.
+function Format-FalaTriagem($itens) {
+    $lista = @($itens)
+    if ($lista.Count -eq 0) { return '' }
+
+    $n = $lista.Count
+    $total = 0
+    foreach ($i in $lista) { $total += [int]$i.quantos }
+
+    $citados = @($lista | Select-Object -First $MaxNomesTriagem |
+                 ForEach-Object { ([string]$_.projeto).Replace('-', ' ') })
+    $sobram = $n - $citados.Count
+
+    if ($citados.Count -eq 1) {
+        $nomes = $citados[0]
+    } else {
+        # "alfa, beta e gama" soa melhor que "alfa, beta, gama".
+        $nomes = ($citados[0..($citados.Count - 2)] -join ', ') + " e $($citados[-1])"
+    }
+    if ($sobram -gt 0) {
+        # "e mais um" solto soa como mais um resumo; o que sobra e projeto.
+        $pSobra = if ($sobram -eq 1) { 'projeto' } else { 'projetos' }
+        $nomes = ($citados -join ', ') + ", e mais $(Get-PorExtenso $sobram) $pSobra"
+    }
+
+    $pProj = if ($n -eq 1)     { 'projeto' } else { 'projetos' }
+    $pRes  = if ($total -eq 1) { 'resumo' }  else { 'resumos' }
+    return "$(Get-PorExtenso $n) $pProj esperando, $(Get-PorExtenso $total) ${pRes}: $nomes."
+}
+
+# O nome do projeto como a voz deve dizer: hifen soletrado em voz alta e
+# ilegivel, e "velocimetro-tokens" sai como "velocimetro traco tokens".
+function Format-FalaProjeto([string]$projeto) {
+    if ([string]::IsNullOrWhiteSpace($projeto)) { return '' }
+    return $projeto.Replace('-', ' ')
+}
+
+# ------------------------------------------------------- modo selecao
+#
+# Com varios projetos na fila, o atalho de leitura anuncia quem esta esperando e
+# entra em modo selecao: uma tecla passeia pelos projetos e a de leitura confirma.
+# Passear nao consome nem apaga nada.
+
+function Get-Selecao {
+    if (-not (Test-Path $SelecaoPath)) { return '' }
+    try { $nome = ([System.IO.File]::ReadAllText($SelecaoPath)).Trim() } catch { return '' }
+    if (-not $nome) { return '' }
+    # Sem virgula em @() aqui: Get-ProjetosNaFila ja devolve o array protegido,
+    # e envolver de novo criaria array dentro de array.
+    $projetos = Get-ProjetosNaFila
+    if ($projetos -notcontains $nome) {
+        # A selecao expira junto com o motivo dela existir.
+        Clear-Selecao
+        return ''
+    }
+    return $nome
+}
+
+function Set-Selecao([string]$projeto) {
+    [System.IO.File]::WriteAllText($SelecaoPath, $projeto, $Utf8SemBom)
+}
+
+function Clear-Selecao {
+    Remove-Item $SelecaoPath -Force -ErrorAction SilentlyContinue
+}
+
+function Start-Selecao {
+    $projetos = Get-ProjetosNaFila
+    if ($projetos.Count -eq 0) { Clear-Selecao; return '' }
+    Set-Selecao $projetos[0]
+    return $projetos[0]
+}
+
+# Passa para o proximo projeto, dando a volta no fim da lista.
+function Move-Selecao {
+    $projetos = Get-ProjetosNaFila
+    if ($projetos.Count -eq 0) { Clear-Selecao; return '' }
+    $atual = Get-Selecao
+    $i = [array]::IndexOf([array]$projetos, $atual)
+    $prox = if ($i -lt 0) { 0 } else { ($i + 1) % $projetos.Count }
+    Set-Selecao $projetos[$prox]
+    return $projetos[$prox]
 }
 
 # ------------------------------------------------- caixa de entrada por projeto
@@ -338,9 +522,14 @@ function Get-ProjetosNaFila {
     return ,$nomes.ToArray()
 }
 
+# Vai ate vinte porque vinte e o teto da fila. Digito solto na fala sai lido de
+# formas imprevisiveis, entao todo numero que o sistema pode produzir tem de ter
+# palavra aqui.
 $NumeroPorExtenso = @{
-    1 = 'um'; 2 = 'dois'; 3 = 'tres'; 4 = 'quatro'; 5 = 'cinco';
-    6 = 'seis'; 7 = 'sete'; 8 = 'oito'; 9 = 'nove'; 10 = 'dez'
+    1 = 'um';    2 = 'dois';    3 = 'tres';    4 = 'quatro';   5 = 'cinco'
+    6 = 'seis';  7 = 'sete';    8 = 'oito';    9 = 'nove';    10 = 'dez'
+    11 = 'onze'; 12 = 'doze';  13 = 'treze';  14 = 'quatorze'; 15 = 'quinze'
+    16 = 'dezesseis'; 17 = 'dezessete'; 18 = 'dezoito'; 19 = 'dezenove'; 20 = 'vinte'
 }
 
 # Monta o que sai pela voz: de onde veio, o resumo, e quantos ainda esperam.
@@ -592,12 +781,12 @@ function Invoke-Fala {
     )
     $cfg = Get-Config
     $falavel = ConvertTo-Falavel $texto $cfg.maxChars
-    if ([string]::IsNullOrWhiteSpace($falavel)) { return }
+    if ([string]::IsNullOrWhiteSpace($falavel)) { return 'vazio' }
 
     $inv = Get-PythonInvocacao $cfg
     if (-not $inv) {
         Write-Log 'Python nao encontrado. Defina o caminho no campo "python" do config.json.'
-        return
+        return 'erro'
     }
 
     $rate = if ($RateOverride) { $RateOverride } else { $cfg.rate }
@@ -613,7 +802,7 @@ function Invoke-Fala {
         [System.IO.File]::WriteAllText($PidPath, "$PID", $Utf8SemBom)
 
         $segmentos = @(Split-EmSegmentos -Texto $falavel)
-        if ($segmentos.Count -eq 0) { return }
+        if ($segmentos.Count -eq 0) { return 'vazio' }
 
         $pasta = Join-Path $env:TEMP "clarisse_$([guid]::NewGuid().ToString('N'))"
         New-Item -ItemType Directory -Force $pasta | Out-Null
@@ -631,9 +820,12 @@ function Invoke-Fala {
             $proc = Start-Process -FilePath $inv.exe -ArgumentList $argumentos -WindowStyle Hidden -PassThru
 
             # A voz pode ter sido desligada enquanto o audio era gerado.
-            if ($RespeitaEnabled -and -not (Get-Config).enabled) { return }
+            if ($RespeitaEnabled -and -not (Get-Config).enabled) { return 'mudo' }
 
             Set-Controle 'tocar'
+            # Comeca em 'fim' e so piora: quem chamou usa isso para decidir se o
+            # resumo ja pode sair da fila ou se continua esperando a vez.
+            $resultado = 'fim'
             for ($i = 0; $i -lt $segmentos.Count; $i++) {
                 # O primeiro pedaco e o unico que espera de verdade; os
                 # seguintes ja estao prontos quando chega a vez deles.
@@ -645,11 +837,14 @@ function Invoke-Fala {
                     } elseif ($estado -eq 'timeout') {
                         Write-Log "segmento $i nao ficou pronto no prazo"
                     }
+                    $resultado = if ($estado -eq 'cancelado') { 'cancelado' } else { 'erro' }
                     break
                 }
-                if ((Invoke-TocaArquivo (Get-CaminhoSegmento $pasta $i)) -ne 'fim') { break }
+                $tocou = Invoke-TocaArquivo (Get-CaminhoSegmento $pasta $i)
+                if ($tocou -ne 'fim') { $resultado = $tocou; break }
             }
             Set-Controle 'tocar'
+            return $resultado
         } finally {
             # parar.txt antes de matar: se o processo escapar, ele mesmo desiste
             # no proximo segmento em vez de seguir baixando audio perdido.
@@ -669,10 +864,23 @@ function Invoke-Fala {
 # Dispara a fala num processo separado para nao travar o Claude Code.
 # O sufixo .nohist no nome do arquivo diz ao processo filho para nao historiar
 # de novo um texto que ja foi guardado no historico.
-function Start-FalaAssincrona([string]$texto, [switch]$PularHistorico) {
+# Dispara um modo do clarisse.ps1 em outro processo. O escutador de atalhos usa
+# isso para nao duplicar a logica de leitura: ela vive num lugar so, e o laco de
+# mensagens do escutador volta na hora em vez de esperar a fala.
+function Start-Modo([string]$modo) {
+    Start-Process -FilePath 'powershell.exe' `
+        -ArgumentList '-NoProfile', '-NonInteractive', '-WindowStyle', 'Hidden', '-ExecutionPolicy', 'Bypass', '-File', "`"$(Join-Path $Root 'clarisse.ps1')`"", '-Mode', $modo `
+        -WindowStyle Hidden | Out-Null
+}
+
+# O sufixo .fila no nome do arquivo diz ao processo filho que esta fala consome
+# um item da fila: se ela chegar ao fim, o resumo sai; se for cortada, volta.
+function Start-FalaAssincrona([string]$texto, [switch]$PularHistorico, [switch]$ConsomeFila) {
     if ([string]::IsNullOrWhiteSpace($texto)) { return }
     if (-not (Test-Path $PendDir)) { New-Item -ItemType Directory -Force $PendDir | Out-Null }
-    $sufixo = if ($PularHistorico) { '.nohist' } else { '' }
+    $sufixo = ''
+    if ($PularHistorico) { $sufixo += '.nohist' }
+    if ($ConsomeFila)    { $sufixo += '.fila' }
     $arq = Join-Path $PendDir ("$([guid]::NewGuid().ToString('N'))$sufixo.txt")
     [System.IO.File]::WriteAllText($arq, $texto, $Utf8SemBom)
     Start-Process -FilePath 'powershell.exe' `
