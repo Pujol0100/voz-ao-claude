@@ -177,10 +177,22 @@ if (Test-Path $destConfig) {
     $mudou = $false
     if ($atual.PSObject.Properties.Name -notcontains 'atalhos') {
         $atual | Add-Member -NotePropertyName atalhos -NotePropertyValue ([pscustomobject]@{
-            ativo = $true; ler = 'Ctrl+Alt+L'; pausar = 'Ctrl+Alt+P'; cancelar = 'Ctrl+Alt+X'
+            ativo = $true; ler = 'Ctrl+Alt+L'; pular = 'Ctrl+Alt+J'
+            pausar = 'Ctrl+Alt+P'; cancelar = 'Ctrl+Alt+X'
         }) -Force
         $mudou = $true
         Passo 'config.json ganhou o bloco de atalhos'
+    }
+    # Quem ja tinha o bloco de atalhos nao tem a tecla de passear pelos projetos.
+    if ($atual.atalhos -and ($atual.atalhos.PSObject.Properties.Name -notcontains 'pular')) {
+        $atual.atalhos | Add-Member -NotePropertyName pular -NotePropertyValue 'Ctrl+Alt+J' -Force
+        $mudou = $true
+        Passo 'config.json ganhou a tecla que passeia pelos projetos (Ctrl+Alt+J)'
+    }
+    if ($atual.PSObject.Properties.Name -notcontains 'triagem') {
+        $atual | Add-Member -NotePropertyName triagem -NotePropertyValue $true -Force
+        $mudou = $true
+        Passo 'config.json ganhou a triagem falada (desligue com "triagem": false)'
     }
     if ($atual.maxChars -lt 1800) {
         $atual.maxChars = 1800

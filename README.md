@@ -59,11 +59,12 @@ você fala  ──►  Claude Code (voice mode)  ──►  Claude trabalha
 
 | Tecla | O que faz |
 |---|---|
-| `Ctrl+Alt+L` | Lê o resumo que está na fila |
+| `Ctrl+Alt+L` | Lê o resumo da fila — ou, com vários projetos esperando, anuncia quem são |
+| `Ctrl+Alt+J` | Passeia para o próximo projeto da fila, sem consumir nada |
 | `Ctrl+Alt+P` | Pausa a fala; aperte de novo e ela **retoma do mesmo ponto** |
-| `Ctrl+Alt+X` | Cancela a fala na hora |
+| `Ctrl+Alt+X` | Cancela a fala na hora — e o resumo **volta para a fila** |
 
-As três combinações são configuráveis. Elas funcionam com qualquer janela em foco — inclusive fora do terminal.
+As quatro combinações são configuráveis. Elas funcionam com qualquer janela em foco — inclusive fora do terminal.
 
 Isso exige um processo residente: um `powershell.exe` oculto registra as teclas via `RegisterHotKey` do Win32 e dorme em `GetMessage`, sem consumir CPU. Ele **continua rodando depois que você fecha o Claude Code** — é o que faz o atalho responder a qualquer momento. `/clarisse status` mostra se ele está de pé e `/clarisse atalhos off` o encerra.
 
@@ -87,11 +88,27 @@ Por isso cada sessão escreve o resumo na **sua própria caixa** — `entrada/<p
 
 > *"No projeto voz-ao-claude: rodei os vinte e sete testes e todos passaram. Tem mais um resumo esperando."*
 
-`Ctrl+Alt+L` entrega o mais recente primeiro e vai descendo. Nada é sobrescrito: se três sessões terminam juntas, os três resumos esperam a sua vez. A fila guarda 20 e descarta os mais antigos além disso.
+Nada é sobrescrito: se três sessões terminam juntas, os três resumos esperam a sua vez. A fila guarda 20 e descarta os mais antigos além disso.
+
+A ordem é a de chegada, e isso exigiu conserto: o nome do arquivo era o milissegundo mais um identificador aleatório, e o relógio do Windows tem granularidade grossa demais para separar duas escritas seguidas. Medido em 200 repetições, **34% dos pares caíam no mesmo milissegundo e a fila saía invertida em 22% das vezes** — quem desempatava era o identificador sorteado. Hoje um contador por milissegundo preserva a ordem.
 
 A origem vem do **nome do arquivo**, não de qual sessão disparou o hook. Por isso qualquer sessão que termine recolhe tudo que estiver parado, sempre com a atribuição certa — nenhum resumo fica preso esperando aquela sessão específica terminar de novo.
 
 Os pedidos de permissão também dizem de quem são: *"O projeto cadeia-sequencial precisa da sua permissão para continuar."*
+
+### Escolher qual projeto ouvir
+
+Com um projeto na fila, `Ctrl+Alt+L` lê e pronto. Com **vários**, ela primeiro anuncia quem está esperando:
+
+> *"Seis projetos esperando, vinte resumos: compliance app, velocímetro tokens, consultor financeiro, conciliação bancária, omni api, e mais um projeto. Selecionado: compliance app."*
+
+Daí `Ctrl+Alt+J` passeia pelos projetos (ela diz só o nome) e `Ctrl+Alt+L` confirma e lê. `/clarisse ler concil` vai direto ao projeto, aceitando nome parcial.
+
+**Passear não custa nada, e desistir também não.** O resumo só sai da fila quando a fala chega ao fim: cancelar no meio o devolve para a fila. Antes o arquivo era apagado no momento da entrega — caçar o resumo de um projeto específico destruía todos os que passavam na frente, e cancelar ao perceber que era o projeto errado perdia aquele resumo de vez.
+
+A frase da triagem é deliberadamente curta. Listar seis projetos com a contagem de cada um dava 334 caracteres, uns 25 segundos só para anunciar a lista — ouvir isso a cada leitura seria pior que o problema que a triagem resolve. Ela diz os totais e no máximo cinco nomes.
+
+Se preferir o comportamento antigo, `"triagem": false` no config faz `Ctrl+Alt+L` voltar a entregar direto o mais recente.
 
 `/clarisse status` mostra quantos resumos esperam e de quais projetos.
 
