@@ -120,7 +120,7 @@ function Split-EmSegmentos {
         [int]$PrimeiroMax = 110,
         [int]$DemaisMax   = 320
     )
-    if ([string]::IsNullOrWhiteSpace($Texto)) { return ,@() }
+    if ([string]::IsNullOrWhiteSpace($Texto)) { return @() }
     $t = ([regex]::Replace($Texto, '\s+', ' ')).Trim()
 
     # Fim de frase e pontuacao seguida de espaco. Numero decimal fica inteiro de
@@ -150,8 +150,10 @@ function Split-EmSegmentos {
     }
     if ($acc) { [void]$segs.Add($acc) }
 
-    # A virgula impede o PowerShell de desembrulhar array de um elemento so.
-    return ,$segs.ToArray()
+    # Sem o operador virgula aqui de proposito: quem chama envolve em @(), e os
+    # dois juntos criariam um array dentro de um array - o texto inteiro voltaria
+    # a ser um unico segmento e a espera voltaria com ele.
+    return $segs.ToArray()
 }
 
 function Get-ItensHistorico {
@@ -529,7 +531,58 @@ function Stop-Fala {
     return $matou
 }
 
+# Toca um pedaco de audio ate o fim, obedecendo pausa e cancelamento.
+# Devolve 'fim', 'cancelado' ou 'ilegivel' - o laco de reproducao trata os tres
+# de formas diferentes, e um booleano nao daria para distinguir.
+function Invoke-TocaArquivo([string]$mp3) {
+    # Antes de abrir o arquivo, para o Ctrl+Alt+X responder na hora em vez de
+    # esperar o pedaco atual carregar.
+    if ((Get-Controle) -eq 'cancelar') { return 'cancelado' }
+    if (-not (Test-Path $mp3))         { return 'ilegivel' }
+
+    Add-Type -AssemblyName PresentationCore
+    $player = New-Object System.Windows.Media.MediaPlayer
+    try {
+        $player.Open([uri]$mp3)
+        # O MediaPlayer carrega o arquivo de forma assincrona e nao lanca erro
+        # em arquivo invalido: a duracao nunca aparecer e o sinal de que veio
+        # corrompido.
+        $espera = 0
+        while (-not $player.NaturalDuration.HasTimeSpan -and $espera -lt 60) {
+            Start-Sleep -Milliseconds 50
+            $espera++
+        }
+        if (-not $player.NaturalDuration.HasTimeSpan) { return 'ilegivel' }
+        $dur = $player.NaturalDuration.TimeSpan.TotalSeconds
+
+        $player.Play()
+        $pausado = $false
+        # Trava de seguranca: uma pausa esquecida nao pode prender o mutex.
+        $limite = [datetime]::Now.AddMinutes(20)
+        while ($player.Position.TotalSeconds -lt $dur -and [datetime]::Now -lt $limite) {
+            switch (Get-Controle) {
+                'cancelar' { return 'cancelado' }
+                'pausado'  { if (-not $pausado) { $player.Pause(); $pausado = $true } }
+                'tocar'    { if ($pausado)      { $player.Play();  $pausado = $false } }
+            }
+            Start-Sleep -Milliseconds 120
+        }
+        # Evita cortar a ultima silaba; entre segmentos soa como pausa de frase.
+        Start-Sleep -Milliseconds 120
+        return 'fim'
+    } finally {
+        $player.Stop()
+        $player.Close()
+    }
+}
+
 # Gera o audio e toca. Bloqueia ate terminar; um mutex evita falas sobrepostas.
+#
+# A sintese acontece em pedacos, num processo Python a parte, e a reproducao
+# comeca no primeiro pedaco em vez de esperar o audio inteiro. Medido num resumo
+# de mil e quinhentos caracteres: 33 segundos de espera antes, cerca de dois
+# depois. Sintetizar e umas tres vezes mais rapido que falar, entao a geracao
+# corre na frente da voz e nao engasga entre os pedacos.
 function Invoke-Fala {
     param(
         [string]$texto,
@@ -555,71 +608,57 @@ function Invoke-Fala {
         $obteve = $mutex.WaitOne(60000)
         if (-not $PularHistorico) { Add-Historico $falavel }
 
-        # O PID vai para o disco antes da geracao do audio: cancelar precisa
-        # interromper tambem enquanto o edge-tts ainda esta baixando a fala.
+        # O PID vai para o disco antes da sintese: cancelar precisa interromper
+        # tambem enquanto o audio ainda esta sendo gerado.
         [System.IO.File]::WriteAllText($PidPath, "$PID", $Utf8SemBom)
 
-        $id  = [guid]::NewGuid().ToString('N')
-        $txt = Join-Path $env:TEMP "clarisse_$id.txt"
-        $mp3 = Join-Path $env:TEMP "clarisse_$id.mp3"
+        $segmentos = @(Split-EmSegmentos -Texto $falavel)
+        if ($segmentos.Count -eq 0) { return }
+
+        $pasta = Join-Path $env:TEMP "clarisse_$([guid]::NewGuid().ToString('N'))"
+        New-Item -ItemType Directory -Force $pasta | Out-Null
+        $proc = $null
         try {
-            [System.IO.File]::WriteAllText($txt, $falavel, $Utf8SemBom)
+            [System.IO.File]::WriteAllLines((Join-Path $pasta 'segmentos.txt'), $segmentos, $Utf8SemBom)
 
             $argumentos = $inv.pre + @(
-                '-m', 'edge_tts',
-                '--voice', $cfg.voice,
-                '--rate', $rate,
-                '--volume', $cfg.volume,
-                '--file', $txt,
-                '--write-media', $mp3
+                (Join-Path $Root 'falar.py'),
+                '--pasta',  $pasta,
+                '--voz',    $cfg.voice,
+                '--rate',   $rate,
+                '--volume', $cfg.volume
             )
-            & $inv.exe @argumentos 2>$null | Out-Null
-
-            if (-not (Test-Path $mp3)) { Write-Log 'falha ao gerar mp3'; return }
-            if ((Get-Item $mp3).Length -lt 200) { Write-Log 'mp3 vazio'; return }
-
-            Add-Type -AssemblyName PresentationCore
-            $player = New-Object System.Windows.Media.MediaPlayer
-            $player.Open([uri]$mp3)
-            $espera = 0
-            while (-not $player.NaturalDuration.HasTimeSpan -and $espera -lt 100) {
-                Start-Sleep -Milliseconds 50
-                $espera++
-            }
-            if (-not $player.NaturalDuration.HasTimeSpan) { Write-Log 'mp3 ilegivel'; return }
-            $dur = $player.NaturalDuration.TimeSpan.TotalSeconds
+            $proc = Start-Process -FilePath $inv.exe -ArgumentList $argumentos -WindowStyle Hidden -PassThru
 
             # A voz pode ter sido desligada enquanto o audio era gerado.
-            if ($RespeitaEnabled -and -not (Get-Config).enabled) {
-                $player.Close()
-                return
-            }
+            if ($RespeitaEnabled -and -not (Get-Config).enabled) { return }
 
             Set-Controle 'tocar'
-            $player.Play()
-            $pausado = $false
-            # Trava de seguranca: uma pausa esquecida nao pode prender o mutex.
-            $limite = [datetime]::Now.AddMinutes(20)
-            while ($player.Position.TotalSeconds -lt $dur -and [datetime]::Now -lt $limite) {
-                switch (Get-Controle) {
-                    'cancelar' {
-                        $player.Stop(); $player.Close()
-                        Set-Controle 'tocar'
-                        return
+            for ($i = 0; $i -lt $segmentos.Count; $i++) {
+                # O primeiro pedaco e o unico que espera de verdade; os
+                # seguintes ja estao prontos quando chega a vez deles.
+                $estado = Wait-SegmentoPronto $pasta $i 120
+                if ($estado -ne 'pronto') {
+                    if ($estado -eq 'erro') {
+                        $msg = try { [System.IO.File]::ReadAllText((Join-Path $pasta 'erro.txt')) } catch { 'desconhecido' }
+                        Write-Log "sintese falhou no segmento ${i}: $msg"
+                    } elseif ($estado -eq 'timeout') {
+                        Write-Log "segmento $i nao ficou pronto no prazo"
                     }
-                    'pausado' { if (-not $pausado) { $player.Pause(); $pausado = $true } }
-                    'tocar'   { if ($pausado)      { $player.Play();  $pausado = $false } }
+                    break
                 }
-                Start-Sleep -Milliseconds 120
+                if ((Invoke-TocaArquivo (Get-CaminhoSegmento $pasta $i)) -ne 'fim') { break }
             }
-            Start-Sleep -Milliseconds 300
-            $player.Stop()
-            $player.Close()
             Set-Controle 'tocar'
         } finally {
+            # parar.txt antes de matar: se o processo escapar, ele mesmo desiste
+            # no proximo segmento em vez de seguir baixando audio perdido.
+            try { [System.IO.File]::WriteAllText((Join-Path $pasta 'parar.txt'), '') } catch { }
+            if ($proc -and -not $proc.HasExited) {
+                Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue
+            }
             Remove-Item $PidPath -Force -ErrorAction SilentlyContinue
-            Remove-Item $txt -Force -ErrorAction SilentlyContinue
-            Remove-Item $mp3 -Force -ErrorAction SilentlyContinue
+            Remove-Item $pasta -Recurse -Force -ErrorAction SilentlyContinue
         }
     } finally {
         if ($obteve) { $mutex.ReleaseMutex() }

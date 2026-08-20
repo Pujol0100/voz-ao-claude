@@ -91,3 +91,33 @@ Describe 'Wait-SegmentoPronto' {
         $r | Should Be 'cancelado'
     }
 }
+
+Describe 'Invoke-TocaArquivo' {
+    # Devolve o estado em vez de um booleano: o laco de reproducao precisa
+    # distinguir "acabou" de "o usuario cancelou" e de "esse pedaco veio
+    # corrompido", que tem tratamentos diferentes.
+    #
+    # Os casos audiveis nao entram na suite de proposito: teste que toca som na
+    # maquina de quem roda a suite e teste que ninguem roda duas vezes.
+
+    It 'diz ilegivel quando o arquivo nao existe' {
+        Set-Controle 'tocar'
+        Invoke-TocaArquivo (Join-Path $ClarisseRoot 'nao-existe.mp3') | Should Be 'ilegivel'
+    }
+
+    It 'diz ilegivel quando o arquivo nao e audio de verdade' {
+        Set-Controle 'tocar'
+        $falso = Join-Path $ClarisseRoot 'falso.mp3'
+        [System.IO.File]::WriteAllText($falso, 'isto nao e um mp3')
+        Invoke-TocaArquivo $falso | Should Be 'ilegivel'
+    }
+
+    It 'diz cancelado sem nem abrir o arquivo quando o cancelamento ja chegou' {
+        # Checar o cancelamento antes de abrir o player e o que faz Ctrl+Alt+X
+        # responder na hora em vez de esperar o pedaco atual carregar.
+        Set-Controle 'cancelar'
+        $r = Invoke-TocaArquivo (Join-Path $ClarisseRoot 'nao-existe.mp3')
+        Set-Controle 'tocar'
+        $r | Should Be 'cancelado'
+    }
+}

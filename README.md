@@ -38,13 +38,16 @@ você fala  ──►  Claude Code (voice mode)  ──►  Claude trabalha
                                                      │
                                           você aperta Ctrl+Alt+L
                                                      │
-                                    edge-tts gera o áudio ──► 🔊 Clarisse fala
+                       edge-tts gera o 1º pedaço ──► 🔊 Clarisse fala
+                                                     │
+                              o resto é gerado enquanto ela fala
 ```
 
 | Peça | Papel |
 |---|---|
-| `clarisse/nucleo.ps1` | Núcleo compartilhado: config, saneamento do texto, caixa de entrada, fila, controle do áudio |
+| `clarisse/nucleo.ps1` | Núcleo compartilhado: config, saneamento do texto, segmentação, caixa de entrada, fila, controle do áudio |
 | `clarisse/clarisse.ps1` | Motor: gera o áudio e reproduz |
+| `clarisse/falar.py` | Sintetiza a fala em pedaços, em fluxo, para a voz começar quase na hora |
 | `clarisse/atalhos.ps1` | Escutador residente dos atalhos globais |
 | Hook `Stop` | Enfileira o resumo e bipa quando o Claude termina |
 | Hook `Notification` | **Fala** qual projeto parou pedindo permissão — ali o Claude está travado esperando você |
@@ -65,6 +68,16 @@ As três combinações são configuráveis. Elas funcionam com qualquer janela e
 Isso exige um processo residente: um `powershell.exe` oculto registra as teclas via `RegisterHotKey` do Win32 e dorme em `GetMessage`, sem consumir CPU. Ele **continua rodando depois que você fecha o Claude Code** — é o que faz o atalho responder a qualquer momento. `/clarisse status` mostra se ele está de pé e `/clarisse atalhos off` o encerra.
 
 A pausa é pausa de verdade, não um "matar e recomeçar": o reprodutor lê um arquivo de controle a cada 120 ms e usa `Pause()`/`Play()` do `MediaPlayer`.
+
+### A fala começa antes do áudio estar pronto
+
+Gerar o áudio inteiro antes de tocar a primeira nota custava **33 segundos de silêncio** num resumo de 1.500 caracteres — e o tempo cresce junto com o texto, então ampliar o limite da fala piorou isso sem ninguém perceber.
+
+O texto é cortado em pedaços e sintetizado **em fluxo**: a fala começa no primeiro pedaço enquanto o resto ainda está sendo gerado. Medido na mesma máquina, com o mesmo resumo: **33 s → 3 s**. Sintetizar é cerca de 3× mais rápido que falar, então depois do primeiro pedaço a geração corre na frente da voz e não engasga.
+
+O primeiro pedaço é deliberadamente curto, porque é ele que define a espera. Cortar demais também custa: cada pedaço é uma ida ao servidor de voz.
+
+O sinal de "pode tocar" é um arquivo-sentinela escrito **depois** de o mp3 ser fechado — a existência do mp3 não serve, porque um arquivo ainda em gravação abre no player com duração errada e corta a fala no meio. De brinde, `Ctrl+Alt+X` responde em 0,4 s, e um pedaço corrompido custa uma frase em vez do resumo inteiro.
 
 ### Várias sessões abertas ao mesmo tempo
 
