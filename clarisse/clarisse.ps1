@@ -62,24 +62,24 @@ switch ($Mode) {
 
     'on' {
         $cfg.enabled = $true; Save-Config $cfg
-        Invoke-Fala 'Voz ligada.' -PularHistorico
+        Invoke-Fala 'Voz ligada.' -PularHistorico | Out-Null
         Write-Output 'Clarisse: LIGADA'
     }
 
     'off' {
-        Invoke-Fala 'Voz desligada.' -PularHistorico
+        Invoke-Fala 'Voz desligada.' -PularHistorico | Out-Null
         $cfg.enabled = $false; Save-Config $cfg
         Write-Output 'Clarisse: DESLIGADA'
     }
 
     'toggle' {
         if ($cfg.enabled) {
-            Invoke-Fala 'Voz desligada.' -PularHistorico
+            Invoke-Fala 'Voz desligada.' -PularHistorico | Out-Null
             $cfg.enabled = $false; Save-Config $cfg
             Write-Output 'Clarisse: DESLIGADA'
         } else {
             $cfg.enabled = $true; Save-Config $cfg
-            Invoke-Fala 'Voz ligada.' -PularHistorico
+            Invoke-Fala 'Voz ligada.' -PularHistorico | Out-Null
             Write-Output 'Clarisse: LIGADA'
         }
     }
@@ -168,7 +168,7 @@ switch ($Mode) {
     'atalhos-on' {
         if (Test-AtalhosAtivos) { Write-Output 'Clarisse: atalhos ja estavam ativos'; break }
         if (Start-Atalhos -Aguardar) {
-            Write-Output "Clarisse: atalhos ativos - $($cfg.atalhos.ler) le, $($cfg.atalhos.pausar) pausa, $($cfg.atalhos.cancelar) cancela"
+            Write-Output "Clarisse: atalhos ativos - $($cfg.atalhos.ler) le, $($cfg.atalhos.pular) passeia, $($cfg.atalhos.pausar) pausa, $($cfg.atalhos.cancelar) cancela"
         } else {
             Write-Output 'Clarisse: nao consegui registrar os atalhos - outro programa deve estar usando essas teclas. Veja o clarisse.log e troque a combinacao no config.'
         }
@@ -201,7 +201,7 @@ switch ($Mode) {
         }
         $rate = ''
         if ($Devagar) { $rate = Get-RateMaisLento $cfg.rate }
-        Invoke-Fala $itens[$Indice - 1] -RateOverride $rate -PularHistorico
+        Invoke-Fala $itens[$Indice - 1] -RateOverride $rate -PularHistorico | Out-Null
         $rotulo = if ($Devagar) { ' (mais devagar)' } else { '' }
         Write-Output "Clarisse: repetiu a fala $Indice de $($itens.Count)$rotulo"
     }
@@ -231,12 +231,12 @@ switch ($Mode) {
     }
 
     'test' {
-        Invoke-Fala 'Teste da Clarisse. Voz neural funcionando, velocidade e volume conforme a configuracao atual.' -PularHistorico
+        Invoke-Fala 'Teste da Clarisse. Voz neural funcionando, velocidade e volume conforme a configuracao atual.' -PularHistorico | Out-Null
         Write-Output 'Teste reproduzido.'
     }
 
     'say' {
-        if ($cfg.enabled) { Invoke-Fala $Text }
+        if ($cfg.enabled) { Invoke-Fala $Text | Out-Null }
     }
 
     'speak' {
