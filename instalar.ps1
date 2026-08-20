@@ -165,10 +165,10 @@ if (Test-Path $ScriptDest) {
     try { & $ScriptDest -Mode atalhos-off | Out-Null } catch { }
 }
 
-foreach ($arq in @('clarisse.ps1', 'nucleo.ps1', 'atalhos.ps1')) {
+foreach ($arq in @('clarisse.ps1', 'nucleo.ps1', 'atalhos.ps1', 'falar.py')) {
     Copy-Item (Join-Path $Origem "clarisse\$arq") (Join-Path $DestClarisse $arq) -Force
 }
-Passo "motor de voz, nucleo e escutador de atalhos em $DestClarisse"
+Passo "motor de voz, nucleo, escutador de atalhos e sintetizador em $DestClarisse"
 
 $destConfig = Join-Path $DestClarisse 'config.json'
 if (Test-Path $destConfig) {

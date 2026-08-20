@@ -183,3 +183,51 @@ Describe 'Get-CwdDoHook' {
 }
 
 Remove-Item $ClarisseRoot -Recurse -Force -ErrorAction SilentlyContinue
+
+Describe 'ordem da fila quando dois resumos chegam juntos' {
+    # Medido: em 200 repeticoes de "dois resumos em pasta vazia", 34% caem no
+    # mesmo milissegundo (o relogio do Windows tem granularidade grosseira) e
+    # 22% saem na ordem invertida, porque o desempate era o guid aleatorio.
+    # Import-Entradas enfileira todas as caixas em laco, no mesmo processo:
+    # com varias sessoes terminando juntas, esse e o caso normal, nao a excecao.
+    #
+    # Repetido varias vezes de proposito: uma unica passada acerta por sorte em
+    # quatro de cada cinco tentativas e nao provaria nada.
+    It 'entrega sempre o mais recente primeiro, em 40 repeticoes' {
+        $invertidas = 0
+        foreach ($tentativa in 1..40) {
+            Reset-Fila
+            Add-Pendente 'Resumo antigo.' 'projeto-a'
+            Add-Pendente 'Resumo novo.'   'projeto-b'
+            if ((Read-Pendente).texto -ne 'Resumo novo.') { $invertidas++ }
+        }
+        $invertidas | Should Be 0
+    }
+
+    It 'lista os projetos em ordem estavel na triagem, em 40 repeticoes' {
+        $erradas = 0
+        foreach ($tentativa in 1..40) {
+            Reset-Fila
+            Add-Pendente 'a' 'projeto-a'
+            Add-Pendente 'b' 'projeto-b'
+            if (((Get-ProjetosNaFila) -join ',') -ne 'projeto-b,projeto-a') { $erradas++ }
+        }
+        $erradas | Should Be 0
+    }
+
+    It 'preserva a ordem de chegada de cinco resumos seguidos' {
+        $erradas = 0
+        foreach ($tentativa in 1..15) {
+            Reset-Fila
+            1..5 | ForEach-Object { Add-Pendente "resumo $_" "projeto-$_" }
+            $saida = @()
+            while ($true) {
+                $item = Read-Pendente
+                if (-not $item) { break }
+                $saida += $item.texto
+            }
+            if (($saida -join '|') -ne 'resumo 5|resumo 4|resumo 3|resumo 2|resumo 1') { $erradas++ }
+        }
+        $erradas | Should Be 0
+    }
+}
