@@ -5,10 +5,12 @@
   "rate": "+12%",
   "volume": "+0%",
   "maxChars": 1800,
+  "triagem": true,
   "python": "",
   "atalhos": {
     "ativo": true,
     "ler": "Ctrl+Alt+L",
+    "pular": "Ctrl+Alt+J",
     "pausar": "Ctrl+Alt+P",
     "cancelar": "Ctrl+Alt+X"
   }

@@ -26,11 +26,12 @@
       test                         fala uma frase de teste
 #>
 param(
-    [ValidateSet('say', 'speak', 'stop', 'notify', 'autostart', 'ler', 'alternar-pausa', 'cancelar',
+    [ValidateSet('say', 'speak', 'stop', 'notify', 'autostart', 'ler', 'proximo', 'alternar-pausa', 'cancelar',
                  'atalhos-on', 'atalhos-off', 'on', 'off', 'toggle',
                  'pausar', 'continuar', 'repetir', 'historico', 'status', 'test')]
     [string]$Mode = 'say',
     [string]$Text = '',
+    [string]$Projeto = '',
     [string]$File = '',
     [int]$Indice = 1,
     [switch]$Devagar
@@ -84,16 +85,74 @@ switch ($Mode) {
     }
 
     'ler' {
-        $item = Read-Pendente
-        if (-not $item) {
+        # Ler um resumo tem tres caminhos: o projeto veio pelo comando, o projeto
+        # ja esta escolhido no modo selecao, ou ainda e preciso decidir qual ler.
+
+        if ($Projeto) {
+            $item = Read-Pendente -Projeto $Projeto
+            if (-not $item) {
+                Write-Output "Clarisse: nao ha resumo de '$Projeto' na fila"
+                break
+            }
+            Clear-Selecao
+            # O texto ja foi historiado no hook Stop; nao duplicar.
+            Start-FalaAssincrona (Format-FalaPendente $item) -PularHistorico -ConsomeFila
+            Write-Output "Clarisse: lendo o resumo de $($item.projeto) ($($item.restantes) ainda na fila)"
+            break
+        }
+
+        # Em modo selecao, esta tecla confirma o projeto que estava escolhido.
+        $sel = Get-Selecao
+        if ($sel) {
+            Clear-Selecao
+            $item = Read-Pendente -Projeto $sel
+            if ($item) {
+                Start-FalaAssincrona (Format-FalaPendente $item) -PularHistorico -ConsomeFila
+                Write-Output "Clarisse: lendo o resumo de $($item.projeto) ($($item.restantes) ainda na fila)"
+                break
+            }
+        }
+
+        $resumo = @(Get-ResumoDaFila)
+        if ($resumo.Count -eq 0) {
             Start-FalaAssincrona 'Nada novo para ler.' -PularHistorico
             Write-Output 'Clarisse: nada pendente'
             break
         }
-        # O texto ja foi historiado no hook Stop; nao duplicar.
-        Start-FalaAssincrona (Format-FalaPendente $item) -PularHistorico
-        $de = if ($item.projeto) { " de $($item.projeto)" } else { '' }
-        Write-Output "Clarisse: lendo o resumo$de ($($item.restantes) ainda na fila)"
+
+        $querTriagem = $true
+        if ($cfg.PSObject.Properties.Name -contains 'triagem') { $querTriagem = [bool]$cfg.triagem }
+
+        # Com um projeto so na fila, anunciar a lista seria burocracia.
+        if ($resumo.Count -eq 1 -or (-not $querTriagem)) {
+            $item = Read-Pendente
+            if (-not $item) { Write-Output 'Clarisse: nada pendente'; break }
+            Start-FalaAssincrona (Format-FalaPendente $item) -PularHistorico -ConsomeFila
+            $de = if ($item.projeto) { " de $($item.projeto)" } else { '' }
+            Write-Output "Clarisse: lendo o resumo$de ($($item.restantes) ainda na fila)"
+            break
+        }
+
+        # Varios projetos esperando: anuncia quem sao e entra em modo selecao, em
+        # vez de entregar o mais recente e obrigar o usuario a passar por todos os
+        # outros - destruindo cada um - para achar o que ele queria.
+        $alvo = Start-Selecao
+        Start-FalaAssincrona "$(Format-FalaTriagem $resumo) Selecionado: $(Format-FalaProjeto $alvo)." -PularHistorico
+        $tPular = if ($cfg.atalhos -and $cfg.atalhos.pular) { $cfg.atalhos.pular } else { 'o atalho de passear' }
+        $tLer   = if ($cfg.atalhos -and $cfg.atalhos.ler)   { $cfg.atalhos.ler }   else { 'o atalho de leitura' }
+        Write-Output "Clarisse: $($resumo.Count) projetos na fila - selecionado $alvo ($tPular passeia, $tLer le)"
+    }
+
+    'proximo' {
+        # Passeia pelos projetos da fila sem consumir nem apagar nada.
+        $alvo = Move-Selecao
+        if (-not $alvo) {
+            Start-FalaAssincrona 'Nada novo para ler.' -PularHistorico
+            Write-Output 'Clarisse: fila vazia'
+            break
+        }
+        Start-FalaAssincrona (Format-FalaProjeto $alvo) -PularHistorico
+        Write-Output "Clarisse: selecionado $alvo"
     }
 
     'alternar-pausa' {
@@ -164,9 +223,11 @@ switch ($Mode) {
         $qtdFila = Get-PendenteCount
         $fila = if ($qtdFila -eq 0) { 'nenhum' } else { "$qtdFila ($((Get-ProjetosNaFila) -join ', '))" }
         $atalhos = if (Test-AtalhosAtivos) {
-            "ATIVOS ($($cfg.atalhos.ler) le / $($cfg.atalhos.pausar) pausa / $($cfg.atalhos.cancelar) cancela)"
+            "ATIVOS ($($cfg.atalhos.ler) le / $($cfg.atalhos.pular) passeia / $($cfg.atalhos.pausar) pausa / $($cfg.atalhos.cancelar) cancela)"
         } else { 'DESLIGADOS' }
-        Write-Output "Clarisse: $estado | atalhos: $atalhos | resumos na fila: $fila | voz: $($cfg.voice) | velocidade: $($cfg.rate) | liga sozinha: $auto | falas guardadas: $qtd"
+        $sel = Get-Selecao
+        $selTexto = if ($sel) { " | selecionado: $sel" } else { '' }
+        Write-Output "Clarisse: $estado | atalhos: $atalhos | resumos na fila: $fila$selTexto | voz: $($cfg.voice) | velocidade: $($cfg.rate) | liga sozinha: $auto | falas guardadas: $qtd"
     }
 
     'test' {
@@ -182,10 +243,17 @@ switch ($Mode) {
         # Processo filho: le o arquivo pendente, fala e apaga.
         if ($File -and (Test-Path $File)) {
             $conteudo = Get-Content $File -Raw -Encoding utf8
-            $semHist = $File -like '*.nohist.txt'
+            $semHist = $File -like '*.nohist*'
+            $daFila  = $File -like '*.fila*'
             Remove-Item $File -Force -ErrorAction SilentlyContinue
-            if ($semHist) { Invoke-Fala $conteudo -RespeitaEnabled -PularHistorico }
-            else          { Invoke-Fala $conteudo -RespeitaEnabled }
+            $estado = if ($semHist) { Invoke-Fala $conteudo -RespeitaEnabled -PularHistorico }
+                      else          { Invoke-Fala $conteudo -RespeitaEnabled }
+            # O resumo so sai da fila se a fala chegou ao fim. Cortada no meio,
+            # ele continua esperando a vez em vez de virar perda silenciosa.
+            if ($daFila) {
+                if ($estado -eq 'fim') { Complete-Leitura | Out-Null }
+                else                   { Abort-Leitura    | Out-Null }
+            }
         }
     }
 
